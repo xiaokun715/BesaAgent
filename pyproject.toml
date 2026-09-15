@@ -1,0 +1,116 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "besa-agent"
+version = "0.1.0"
+description = "BesaAgent：面向软件测试全流程的多智能体平台（需求/测试设计/用例/环境/执行/分析/缺陷）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+    "PyYAML>=6.0",
+    "pydantic>=2.7,<3",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# 运行时按需安装：仅对应能力被激活时才必需
+postgres = ["SQLAlchemy>=2.0.30,<2.1", "asyncpg>=0.29", "alembic>=1.13"]
+redis = ["redis>=5.0"]
+server = ["fastapi>=0.111", "uvicorn[standard]>=0.30"]
+mcp = ["fastmcp>=2.2"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "import-linter>=2.0", "mypy>=1.10"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = { find = { where = ["src"] } }
+
+# --------------------------------------------------------------------------- #
+# 测试
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+# src 是导入根（不是包）—— 目录名即顶层模块名，与 besa-iv-kb 一致
+pythonpath = ["src"]
+testpaths = ["tests"]
+# 契约全是 async 的，逐个标 @pytest.mark.asyncio 是纯噪音
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error::DeprecationWarning"]
+
+# --------------------------------------------------------------------------- #
+# 依赖方向契约（《架构概要设计》§1.2）
+#
+# 这些不是风格偏好，是**可以机械校验的架构约束**。放在这里而不是文档里，
+# 是因为文档里的规则会在三个月后失效，而 CI 里的规则不会。
+#
+# 跑法：PYTHONPATH=src lint-imports
+# --------------------------------------------------------------------------- #
+[tool.importlinter]
+root_packages = [
+    "agent", "chat", "context", "event", "foundation", "gateway",
+    "memory", "multiagent", "provider", "repo", "skill", "tool",
+]
+# 注：所有同仓库顶层模块都必须列在上面（哪怕它现在还是空包）。
+# 只列已实现的三个会让 import-linter 把 agent / memory 等当成**外部包**，
+# 从而拒绝加载配置 —— 而它们恰恰是「不得依赖 provider」这条契约要管的对象。
+
+[[tool.importlinter.contracts]]
+name = "provider 契约层不得依赖任何厂商层（NFR-P-06）"
+type = "forbidden"
+source_modules = ["provider.types", "provider.errors", "provider.base"]
+forbidden_modules = [
+    "provider.openai",
+    "provider.dashscope",
+    "provider.vllm",
+    "provider.mock",
+]
+
+[[tool.importlinter.contracts]]
+name = "provider 不得依赖任何业务模块（NFR-P-02）"
+type = "forbidden"
+source_modules = ["provider"]
+forbidden_modules = [
+    "gateway",
+    "agent",
+    "multiagent",
+    "event",
+    "repo",
+    "chat",
+    "memory",
+    "skill",
+    "tool",
+]
+
+[[tool.importlinter.contracts]]
+name = "foundation 不得依赖任何同仓库模块（底座只出不进）"
+type = "forbidden"
+source_modules = ["foundation"]
+forbidden_modules = [
+    "provider",
+    "gateway",
+    "agent",
+    "multiagent",
+    "event",
+    "repo",
+    "chat",
+    "memory",
+    "skill",
+    "tool",
+]
+
+[[tool.importlinter.contracts]]
+name = "gateway 是 provider 的唯一消费者（FR-G-01）"
+type = "forbidden"
+source_modules = [
+    "agent",
+    "multiagent",
+    "event",
+    "repo",
+    "chat",
+    "memory",
+    "skill",
+    "tool",
+]
+forbidden_modules = ["provider"]

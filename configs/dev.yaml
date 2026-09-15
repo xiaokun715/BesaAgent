@@ -1,0 +1,22 @@
+# dev.yaml —— 本地联调：指向真实厂商。
+#
+# **候选链以 mock 收尾是刻意的**：没配密钥时前面的真实模型会被标记为「不可用」
+# （gateway 注册表的**软失败**，见 registry.py 的 _build_spec），
+# 于是链路自动落到 mock —— 本地照样跑得通，而错误信息里留着
+# 「为什么那个模型没被用」的明确原因。
+#
+# 这同时把 NFR-G-05（无密钥可启动）演示了一遍：缺密钥只是让模型不可用，
+# 不会让进程起不来。
+
+logging:
+  level: DEBUG
+
+gateway:
+  aliases:
+    chat.default:
+      candidates: [chat-deepseek, chat-qwen, chat-mock]
+      strategy: [capability, priority]
+
+    emb.default:
+      candidates: [emb-dashscope, emb-mock]
+      strategy: [capability]

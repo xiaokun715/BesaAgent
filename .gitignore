@@ -1,0 +1,18 @@
+# 密钥 —— configs/ 里只写变量名，值放这里。这条是「配置里永远没有密钥本体」
+# 那条结构性约束的另一半，绝不能少。
+.env
+
+# IDE：本机 SDK 路径等环境相关信息，重新打开工程就会重建
+.idea/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.import_linter_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行时产物
+logs/
+data/
+*.log

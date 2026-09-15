@@ -1,0 +1,17 @@
+# 仓库里一律 LF。
+#
+# 不写这一条，Windows 上 checkout 会得到 CRLF、提交时又转回去，
+# 于是每次有人改一行，diff 里都会带上整个文件 —— 真正的改动被淹没。
+# 部署与 CI 都在 Linux 上，LF 是更安全的那一端。
+* text=auto eol=lf
+
+# 二进制：不做换行符转换，也不要尝试 diff
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.xlsx binary
+*.docx binary
+*.zip  binary

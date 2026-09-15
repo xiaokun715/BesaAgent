@@ -1,0 +1,184 @@
+# base.yaml —— 全环境共享的默认配置，被 <env>.yaml 深度合并覆盖。
+#
+# 本文件里**没有密钥**。厂商只声明 `api_key_env`（变量名），值放仓库根 .env
+# （已 gitignore）或进程环境。这条约束是结构性的：配置里写不出密钥本体。
+#
+# 默认全部指向 mock —— 这是 `python -m pytest` 与 CI 能在
+# **无网络、无密钥、无数据库**环境跑通的前提。
+
+logging:
+  level: INFO
+
+postgres:
+  dsn: ${BESA_POSTGRES_DSN:-postgresql+asyncpg://besa:besa@127.0.0.1:5432/besa}
+
+redis:
+  url: ${BESA_REDIS_URL:-redis://127.0.0.1:6379/0}
+
+# --------------------------------------------------------------------------- #
+# 厂商：一个厂商供应多种能力，共享 base_url 与凭据。
+#
+# model 用 `vendor: <name>` 引用本段（缺省时取 `provider`）。
+#
+# `provider` 与 `vendor` 的区别很关键：
+#   provider = 用哪个**适配器**（协议形状：openai / dashscope / vllm / mock）
+#   vendor   = 用哪一段**端点与凭据**
+# 二者默认相同，所以普通厂商只写 provider 就行。
+# 需要分开的是那种「走 OpenAI 兼容协议、但端点和密钥是自己的」厂商 ——
+# DeepSeek / SiliconFlow / Moonshot 都是，见下面的 models.chat-deepseek。
+# --------------------------------------------------------------------------- #
+providers:
+  mock:
+    # 假实现自带 mock://local，这里显式写出来只是为了让本段的键集合
+    # 与 models 里用到的 vendor 完全对齐 —— 缺一个就会在启动时打 warning。
+    base_url: mock://local
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  dashscope:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+  deepseek:
+    # OpenAI 兼容协议，所以 models 里用 provider: openai + vendor: deepseek
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+  vllm-local:
+    # 自建服务没有公认地址；带默认值只为本地开发方便，生产必须在 <env>.yaml 里显式覆写
+    base_url: ${VLLM_BASE_URL:-http://127.0.0.1:8000/v1}
+    # 本地端点**不配密钥** —— vllm 适配器也不会发 Authorization 头
+
+# --------------------------------------------------------------------------- #
+# 模型：物理模型定义。gateway 的 alias 通过键名引用它们。
+#
+# 注意 capabilities 的两种写法语义不同（provider/types.py 的 _parse_capabilities）：
+#   列表 = 完整声明，**替换**厂商默认
+#   映射 = 增量，**叠加**在厂商默认之上
+# --------------------------------------------------------------------------- #
+models:
+  chat-mock:
+    provider: mock
+    model: mock-llm
+    max_tokens: 2048
+    # mock 厂商的默认能力集是「什么都会」，显式收窄才能反映本模型的用途 ——
+    # 也才不会在启动时触发「既对话又向量化」的告警。
+    capabilities: [chat, stream, tools, json, vision]
+
+  emb-mock:
+    provider: mock
+    model: mock-embedding
+    dimension: 768
+    capabilities: [embedding]
+
+  # --- 真实厂商：按需在 <env>.yaml 里启用 ---
+  chat-openai:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 8192
+    # 推理模型的**思考也计入 max_tokens**，所以预算要按「思考 + 正文」给。
+    # 给小了会返回 content="" 且 finish_reason=length（适配器会打 WARNING）。
+    timeout_s: 120
+    retries: 1          # 只重试网络层；HTTP 错误交 gateway 决策
+    backoff_s: 1.5
+    capabilities: { vision: true }
+
+  chat-qwen:
+    provider: dashscope
+    model: qwen-plus
+    temperature: 0.0
+    max_tokens: 8192
+    timeout_s: 120
+
+  chat-deepseek:
+    provider: openai        # 适配器：DeepSeek 是 OpenAI 兼容形状
+    vendor: deepseek        # 端点与凭据：取自 providers.deepseek
+    model: deepseek-chat
+    temperature: 0.0
+    max_tokens: 8192
+    timeout_s: 120
+
+  emb-dashscope:
+    provider: dashscope
+    model: text-embedding-v3
+    # **必须显式收窄**：不收窄会继承 dashscope 的完整能力集（含 chat），
+    # 于是对话请求可能被路由到 text-embedding-v3，然后在上游得到一个看不懂的 400。
+    # 列表 = 完整声明（替换厂商默认），这正是这里要的语义。
+    capabilities: [embedding]
+    # 必须与向量库的 vector(N) 对齐，否则写入即失败
+    dimension: 1024
+    max_batch: 25
+
+  chat-local:
+    provider: vllm
+    vendor: vllm-local
+    model: Qwen3-32B
+    temperature: 0.0
+    # 自建服务的能力**由部署决定**（加载了什么模型、开了哪些启动参数），
+    # 编译期不可能知道 —— 所以必须在这里声明，默认只有 chat + stream。
+    capabilities: { tools: true, json: true }
+
+# --------------------------------------------------------------------------- #
+# gateway：逻辑名 → 候选链，以及重试/降级/限流/熔断/计价
+#
+# 业务只认 alias（chat.default / emb.default），物理模型完全由这里决定 ——
+# 换模型 = 改配置，业务代码零改动。
+# --------------------------------------------------------------------------- #
+gateway:
+  aliases:
+    chat.default:
+      # 顺序即优先级：前面的先试，失败才降级到后面的
+      candidates: [chat-mock]
+      strategy: [capability, priority]
+
+    emb.default:
+      candidates: [emb-mock]
+      strategy: [capability]
+
+  retry:
+    # 单个候选内的重试次数（不含首发）
+    max_attempts_per_candidate: 2
+    # **跨候选累计**的上游调用上限 —— 这是重试风暴的刹车。
+    # 「重试 × 候选」本会相乘，靠这一个数字封顶（NFR-G-04）。
+    total_max_attempts: 4
+    backoff_base_s: 1.0
+    jitter_ratio: 0.3      # 抖动是必需的：多 agent 并发时同步退避会形成脉冲
+
+  fallback:
+    enabled: true
+    # 流式已输出正文后禁止降级 —— 用户已经看到半截答案，重发只会得到第二份
+    on_stream_started: false
+
+  deadline:
+    default_s: 120         # 整次调用的总预算，不是每一跳的
+
+  rate_limit:
+    enabled: true
+    # 目前仅支持进程内（local）。配 redis 会**明确报错**而不是静默退化成单进程 ——
+    # 后者在多进程部署下会让实际配额超发 N 倍，而本地测试完全正常。
+    backend: local
+    defaults:
+      rpm: 600
+      tpm: 200000
+      max_concurrency: 32
+    on_exceed: wait        # wait（排队，默认）| fallback（立即换候选）
+
+  health:
+    failure_threshold: 5   # 连续失败这么多次 → 熔断打开
+    cooldown_s: 30         # 冷却后进入半开探测
+    half_open_probes: 2    # 半开期连续成功这么多次 → 恢复
+
+  cost:
+    currency: CNY
+    # 每 1K token 单价。**没配价格的模型成本标记为「未知」而不是 0** ——
+    # 0 是「免费」，None 是「不知道」，混同会让成本报表静默失真。
+    prices:
+      chat-openai:
+        input: 0.001
+        output: 0.002
+      chat-qwen:
+        input: 0.0008
+        output: 0.002
+      chat-deepseek:
+        input: 0.001
+        output: 0.002
+        cached_input: 0.0001

@@ -1,0 +1,37 @@
+# test.yaml —— 单测与 CI：把一切钉回 mock。
+#
+# 存在的意义不是「和 base 一样」，而是**保证它不会因为 base 改动而变化**。
+# base.yaml 是给人改的（有人会把它切到真实厂商做本地调试），
+# 而 CI 必须对 base 的改动免疫 —— 否则某次「顺手改一下 base」会让 CI 开始
+# 真的去调外部 API：慢、不稳定、且会在别人的账单上体现出来。
+#
+# 由 tests/unit/conftest.py 设 BESA_ENV=test 触发。
+
+logging:
+  level: WARNING      # 测试输出保持干净
+
+postgres:
+  dsn: postgresql+asyncpg://besa:besa@127.0.0.1:5432/besa_test
+
+gateway:
+  aliases:
+    chat.default:
+      candidates: [chat-mock]
+      strategy: [capability, priority]
+
+    emb.default:
+      candidates: [emb-mock]
+      strategy: [capability]
+
+  retry:
+    # 测试里退避要立刻返回；真实等待会让用例慢且不稳定
+    backoff_base_s: 0.0
+    jitter_ratio: 0.0
+
+  rate_limit:
+    enabled: false       # 单测不测限流时不该被它拖慢
+
+  health:
+    failure_threshold: 5
+    cooldown_s: 30
+    half_open_probes: 2
