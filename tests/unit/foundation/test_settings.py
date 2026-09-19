@@ -75,18 +75,18 @@ def test_lists_are_replaced_not_concatenated(config_dir: Path):
     write_config(config_dir, "base.yaml", """
         gateway:
           aliases:
-            chat.default:
+            runtime.default:
               candidates: [a, b]
     """)
     write_config(config_dir, "dev.yaml", """
         gateway:
           aliases:
-            chat.default:
+            runtime.default:
               candidates: [c]
     """)
 
     cfg = load_config("dev", config_dir=config_dir, env_vars={}, dotenv=False)
-    assert cfg.get("gateway.aliases.chat.default.candidates") == ["c"]
+    assert cfg.get("gateway.aliases.runtime.default.candidates") == ["c"]
 
 
 def test_yaml_syntax_error_names_the_file(config_dir: Path):
@@ -146,11 +146,11 @@ def test_interpolation_reaches_nested_lists(config_dir: Path):
     write_config(config_dir, "base.yaml", """
         gateway:
           aliases:
-            chat.default:
+            runtime.default:
               candidates: ["${A:-a}", "b"]
     """)
     cfg = load_config("dev", config_dir=config_dir, env_vars={}, dotenv=False)
-    assert cfg.get("gateway.aliases.chat.default.candidates") == ["a", "b"]
+    assert cfg.get("gateway.aliases.runtime.default.candidates") == ["a", "b"]
 
 
 def test_plain_dollar_is_untouched(config_dir: Path):
@@ -245,26 +245,26 @@ def test_get_returns_default_for_missing_path(config_dir: Path):
 
 
 def test_get_addresses_keys_that_contain_dots(config_dir: Path):
-    """逻辑模型名写作 ``chat.default``，它在配置树里是**一个键**而非两级路径。
+    """逻辑模型名写作 ``runtime.default``，它在配置树里是**一个键**而非两级路径。
 
-    这是本仓库的常态（``gateway.aliases.chat.default``），
-    所以点分路径必须支持它 —— 否则 ``cfg.get("gateway.aliases.chat.default")``
+    这是本仓库的常态（``gateway.aliases.runtime.default``），
+    所以点分路径必须支持它 —— 否则 ``cfg.get("gateway.aliases.runtime.default")``
     会静默返回 ``None``，而调用方看不出是自己写错了还是配置没有。
     """
     write_config(config_dir, "base.yaml", """
         gateway:
           aliases:
-            chat.default:
+            runtime.default:
               candidates: [a]
             emb.default:
               candidates: [b]
     """)
     cfg = load_config("dev", config_dir=config_dir, env_vars={}, dotenv=False)
 
-    assert cfg.get("gateway.aliases.chat.default.candidates") == ["a"]
+    assert cfg.get("gateway.aliases.runtime.default.candidates") == ["a"]
     assert cfg.get("gateway.aliases.emb.default.candidates") == ["b"]
     # 不带点的普通路径不受影响
-    assert set(cfg.get("gateway.aliases")) == {"chat.default", "emb.default"}
+    assert set(cfg.get("gateway.aliases")) == {"runtime.default", "emb.default"}
 
 
 def test_get_prefers_the_more_specific_key(config_dir: Path):

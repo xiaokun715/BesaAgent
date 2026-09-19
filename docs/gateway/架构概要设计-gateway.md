@@ -205,7 +205,7 @@ class ModelSpec:          # 一个物理模型
     weight: float | None
 
 class AliasSpec:          # 一个逻辑名
-    alias: str            # "chat.default"
+    alias: str            # "runtime.default"
     candidates: list[str] # 有序候选键
     strategy: list[str]   # ["capability", "priority"]
 ```

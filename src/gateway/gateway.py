@@ -177,7 +177,7 @@ class Gateway:
         )
 
         async def invoke(spec: ModelSpec) -> ChatResponse:
-            model = self._resolve_model(spec, "chat")
+            model = self._resolve_model(spec, "runtime")
             return await model.chat(request)  # type: ignore[attr-defined]
 
         return await self._execute(
@@ -555,7 +555,7 @@ class Gateway:
                     blocked_at = index
                     break
 
-                model = self._resolve_model(spec, "chat")
+                model = self._resolve_model(spec, "runtime")
                 chunks: list[str] = []
                 try:
                     # stream_chat 的校验在**调用瞬间**执行（provider 层设计），
@@ -695,7 +695,7 @@ class Gateway:
 
         provider = self._registry.provider(spec.key)
         model = (
-            provider.chat_model() if kind == "chat" else provider.embedding_model()
+            provider.chat_model() if kind == "runtime" else provider.embedding_model()
         )
         self._models[cache_key] = model
         return model

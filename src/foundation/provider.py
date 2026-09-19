@@ -15,7 +15,7 @@ adapter 里的类级默认 URL。``src/provider`` 下有 openai / dashscope / vl
         # 本地端点：不配密钥，且**必须允许不配**
 
     models:
-      chat-default: { provider: openai, model: gpt-4o-mini, temperature: 0.0 }
+      runtime-default: { provider: openai, model: gpt-4o-mini, temperature: 0.0 }
 
 **投影规则**：model 级显式值**覆盖**厂商段默认值；不写 ``provider`` 的 model 走旧行为。
 新增一个厂商 = ``providers:`` 加一段 + ``models:`` 加一个引用它的条目，**仅此而已**。

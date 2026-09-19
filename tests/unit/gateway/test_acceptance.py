@@ -32,7 +32,7 @@ from .conftest import (
     model_spec,
 )
 
-ALIAS = {"chat.default": {"candidates": ["m1", "m2"], "strategy": ["capability", "priority"]}}
+ALIAS = {"runtime.default": {"candidates": ["m1", "m2"], "strategy": ["capability", "priority"]}}
 MODELS = {"m1": model_spec("a", priority=10), "m2": model_spec("b", priority=1)}
 
 
@@ -73,10 +73,10 @@ async def test_b2_swapping_model_is_config_only(gateway_factory):
     for candidates, expected, host in ((["m1"], "A 答", "a"), (["m2"], "B 答", "b")):
         gateway = gateway_factory(
             models=MODELS,
-            aliases={"chat.default": {"candidates": candidates}},
+            aliases={"runtime.default": {"candidates": candidates}},
             handler=router,
         )
-        result = await gateway.chat("chat.default", [Message.text("user", "hi")])
+        result = await gateway.chat("runtime.default", [Message.text("user", "hi")])
         assert result.content == expected
         assert router.count(host) == 1
 
@@ -85,14 +85,14 @@ async def test_b3_unknown_alias_lists_available(gateway_factory):
     """B-3：未注册的逻辑名 → 报错并**列出可用逻辑名**。"""
     gateway = gateway_factory(
         models=MODELS,
-        aliases={"chat.default": {"candidates": ["m1"]}, "chat.reasoning": {"candidates": ["m2"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}, "runtime.reasoning": {"candidates": ["m2"]}},
     )
 
     with pytest.raises(UnknownAliasError) as excinfo:
-        await gateway.chat("chat.defualt", [Message.text("user", "hi")])   # 拼错
+        await gateway.chat("runtime.defualt", [Message.text("user", "hi")])   # 拼错
 
     message = str(excinfo.value)
-    assert "chat.default" in message and "chat.reasoning" in message
+    assert "runtime.default" in message and "runtime.reasoning" in message
 
 
 # --------------------------------------------------------------------------- #
@@ -107,7 +107,7 @@ async def test_b4_degradation_is_marked(gateway_factory):
     )
     gateway = gateway_factory(models=MODELS, aliases=ALIAS, handler=router)
 
-    result = await gateway.chat("chat.default", [Message.text("user", "hi")])
+    result = await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     assert result.content == "备选答"
     assert result.model_key == "m2"
@@ -123,7 +123,7 @@ async def test_b5_all_failed_reports_each_reason(gateway_factory):
     gateway = gateway_factory(models=MODELS, aliases=ALIAS, handler=router)
 
     with pytest.raises(AllCandidatesFailedError) as excinfo:
-        await gateway.chat("chat.default", [Message.text("user", "hi")])
+        await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     error = excinfo.value
     assert error.attempts, "必须保留尝试记录"
@@ -154,12 +154,12 @@ async def test_b6_circuit_breaker_skips_dead_model(gateway_factory):
         health_policy=HealthPolicy(failure_threshold=2, cooldown_s=30, half_open_probes=1),
     )
 
-    await gateway.chat("chat.default", [Message.text("user", "hi")])
+    await gateway.chat("runtime.default", [Message.text("user", "hi")])
     calls_after_first = router.count("a")
     assert calls_after_first == 2, "m1 首发 1 次 + 重试 1 次"
 
     # 熔断已打开 → 第二次调用**不再碰** m1
-    second = await gateway.chat("chat.default", [Message.text("user", "hi")])
+    second = await gateway.chat("runtime.default", [Message.text("user", "hi")])
     assert router.count("a") == calls_after_first, "熔断打开后不得再访问上游"
     assert any(record.skipped_reason == "circuit_open" for record in second.attempts)
     assert second.model_key == "m2"
@@ -167,7 +167,7 @@ async def test_b6_circuit_breaker_skips_dead_model(gateway_factory):
     # 冷却到期 + 模型恢复 → 重新进入主链
     healthy["on"] = True
     gateway._clock.advance(31)
-    third = await gateway.chat("chat.default", [Message.text("user", "hi")])
+    third = await gateway.chat("runtime.default", [Message.text("user", "hi")])
     assert third.model_key == "m1", "半开探测成功后应恢复使用"
     assert third.degraded is False
 
@@ -186,7 +186,7 @@ async def test_b7_rpm_is_enforced(gateway_factory, clock):
     router = HostRouter().on("a", httpx.Response(200, json=chat_body()))
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
         rate_limit=limiter(clock, rpm=2),
         # deadline 必须**大于**限流窗口：等待 60 秒后还要留出真正调用的时间。
@@ -195,7 +195,7 @@ async def test_b7_rpm_is_enforced(gateway_factory, clock):
     )
 
     for _ in range(3):
-        await gateway.chat("chat.default", [Message.text("user", "hi")])
+        await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     assert router.count("a") == 3
     # 第三次必然要等窗口滑动（60 秒）——「排队」而不是「超发」是 FR-G-06 的默认行为
@@ -216,14 +216,14 @@ async def test_b8_total_deadline_is_respected(gateway_factory):
     router = HostRouter().on("a", httpx.Response(503, text="down"))
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
         deadline_s=10.0,
         retry=_big_retry_policy(),
     )
 
     with pytest.raises(AllCandidatesFailedError):
-        await gateway.chat("chat.default", [Message.text("user", "hi")])
+        await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     assert gateway._clock.total_slept <= 10.0, (
         f"总等待 {gateway._clock.total_slept}s 超过 deadline"
@@ -251,7 +251,7 @@ async def test_b9_upstream_calls_are_capped(gateway_factory):
     ).on("c", httpx.Response(503, text="down"))
     gateway = gateway_factory(
         models={"m1": model_spec("a"), "m2": model_spec("b"), "m3": model_spec("c")},
-        aliases={"chat.default": {"candidates": ["m1", "m2", "m3"], "strategy": ["capability"]}},
+        aliases={"runtime.default": {"candidates": ["m1", "m2", "m3"], "strategy": ["capability"]}},
         handler=router,
         retry=RetryPolicy(
             max_attempts_per_candidate=3, total_max_attempts=4, backoff_base_s=0.0, jitter_ratio=0.0
@@ -261,7 +261,7 @@ async def test_b9_upstream_calls_are_capped(gateway_factory):
     # 3 个候选只试到第 2 个预算就没了 → 这是**真的**「还有候选没试过」，报预算耗尽。
     # 与「候选都试完且都失败」（AllCandidatesFailedError）是不同的问题。
     with pytest.raises(BudgetExhaustedError) as excinfo:
-        await gateway.chat("chat.default", [Message.text("user", "hi")])
+        await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     assert excinfo.value.reason == "attempts"
     assert len(router.calls) == 4, f"应为 total_max_attempts=4 次，实际 {len(router.calls)} 次"
@@ -274,14 +274,14 @@ async def test_budget_exhausted_reports_reason(gateway_factory):
     router = HostRouter().on("a", httpx.Response(503, text="down"))
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
         deadline_s=0.5,
         retry=RetryPolicy(max_attempts_per_candidate=3, total_max_attempts=6, backoff_base_s=1.0),
     )
 
     with pytest.raises((BudgetExhaustedError, AllCandidatesFailedError)):
-        await gateway.chat("chat.default", [Message.text("user", "hi")])
+        await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
 
 # --------------------------------------------------------------------------- #
@@ -294,7 +294,7 @@ async def test_b10_stream_committed_blocks_fallback(gateway_factory):
     broken = BrokenStreamTransport(pieces=2)
     gateway = gateway_factory(models=MODELS, aliases=ALIAS, transport=broken)
 
-    events = [event async for event in gateway.stream_chat("chat.default", [Message.text("user", "hi")])]
+    events = [event async for event in gateway.stream_chat("runtime.default", [Message.text("user", "hi")])]
 
     chunks = [event for event in events if isinstance(event, StreamChunk)]
     assert [chunk.text for chunk in chunks] == ["片0", "片1"], "已经吐出的分片要如实传给调用方"
@@ -315,7 +315,7 @@ async def test_b10b_stream_before_first_chunk_can_fallback(gateway_factory):
     )
     gateway = gateway_factory(models=MODELS, aliases=ALIAS, handler=router)
 
-    events = [event async for event in gateway.stream_chat("chat.default", [Message.text("user", "hi")])]
+    events = [event async for event in gateway.stream_chat("runtime.default", [Message.text("user", "hi")])]
 
     assert any(isinstance(event, StreamDone) for event in events)
     assert router.count("b") >= 1, "第一个分片都没吐出时应当降级"
@@ -325,14 +325,14 @@ async def test_b11_missing_capability_is_local_and_lists_gap(gateway_factory):
     """B-11：请求「流式 + 工具」而候选均不支持 → 报错说明缺什么，**零网络调用**。"""
     router = HostRouter().on("a", httpx.Response(200, json=chat_body()))
     gateway = gateway_factory(
-        models={"m1": model_spec("a", provider="vllm")},   # vllm 默认只有 chat + stream
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        models={"m1": model_spec("a", provider="vllm")},   # vllm 默认只有 runtime + stream
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
     )
 
     with pytest.raises(NoCapableModelError) as excinfo:
         await gateway.chat(
-            "chat.default",
+            "runtime.default",
             [Message.text("user", "hi")],
             tools=[ToolSpec("search")],
         )
@@ -351,14 +351,14 @@ async def test_b12_usage_is_aggregated_by_session(gateway_factory):
     router = HostRouter().on("a", httpx.Response(200, json=chat_body("hi", prompt_tokens=100, completion_tokens=50)))
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
         prices={"m1": _price()},
     )
 
-    await gateway.chat("chat.default", [Message.text("user", "hi")], session_id="s-1")
-    await gateway.chat("chat.default", [Message.text("user", "hi")], session_id="s-1")
-    await gateway.chat("chat.default", [Message.text("user", "hi")], session_id="s-2")
+    await gateway.chat("runtime.default", [Message.text("user", "hi")], session_id="s-1")
+    await gateway.chat("runtime.default", [Message.text("user", "hi")], session_id="s-1")
+    await gateway.chat("runtime.default", [Message.text("user", "hi")], session_id="s-2")
 
     totals = gateway.ledger.totals(session_id="s-1")
     assert totals.input_tokens == 200
@@ -382,12 +382,12 @@ async def test_b13_unknown_price_is_not_zero(gateway_factory):
     router = HostRouter().on("a", httpx.Response(200, json=chat_body("hi", prompt_tokens=100, completion_tokens=50)))
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
         prices={},   # 没配价格
     )
 
-    result = await gateway.chat("chat.default", [Message.text("user", "hi")])
+    result = await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     assert result.content == "hi"
     assert result.cost.amount is None
@@ -399,12 +399,12 @@ async def test_unknown_usage_is_not_zero(gateway_factory):
     router = HostRouter().on("a", httpx.Response(200, json=chat_body("hi")))   # 无 usage 字段
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
         prices={"m1": _price()},
     )
 
-    result = await gateway.chat("chat.default", [Message.text("user", "hi")])
+    result = await gateway.chat("runtime.default", [Message.text("user", "hi")])
     assert result.cost.amount is None
 
 
@@ -423,7 +423,7 @@ async def test_b14_event_sequence_is_complete(gateway_factory):
     emitter = RecordingEmitter()
     gateway = gateway_factory(models=MODELS, aliases=ALIAS, handler=router, events=emitter)
 
-    await gateway.chat("chat.default", [Message.text("user", "hi")])
+    await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     names = emitter.names()
     assert EventName.CALL_STARTED in names
@@ -444,12 +444,12 @@ async def test_event_emitter_failure_does_not_break_calls(gateway_factory):
     router = HostRouter().on("a", httpx.Response(200, json=chat_body("ok")))
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
         events=Exploding(),
     )
 
-    result = await gateway.chat("chat.default", [Message.text("user", "hi")])
+    result = await gateway.chat("runtime.default", [Message.text("user", "hi")])
     assert result.content == "ok"
 
 
@@ -466,13 +466,13 @@ async def test_b15_cancellation_releases_quota(gateway_factory, clock):
     """
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         transport=BlockingTransport(),
         rate_limit=limiter(clock, max_concurrency=4),
     )
 
     tasks = [
-        asyncio.create_task(gateway.chat("chat.default", [Message.text("user", "hi")]))
+        asyncio.create_task(gateway.chat("runtime.default", [Message.text("user", "hi")]))
         for _ in range(3)
     ]
     await asyncio.sleep(0.01)
@@ -498,12 +498,12 @@ async def test_b16_errors_do_not_leak_api_key(gateway_factory):
     )
     gateway = gateway_factory(
         models={"m1": model_spec("a")},
-        aliases={"chat.default": {"candidates": ["m1"]}},
+        aliases={"runtime.default": {"candidates": ["m1"]}},
         handler=router,
     )
 
     with pytest.raises(AllCandidatesFailedError) as excinfo:
-        await gateway.chat("chat.default", [Message.text("user", "hi")])
+        await gateway.chat("runtime.default", [Message.text("user", "hi")])
 
     rendered = f"{excinfo.value} {excinfo.value.summary()}"
     assert key not in rendered

@@ -67,7 +67,7 @@ class ModelSpec:
 
 @dataclass(frozen=True)
 class AliasSpec:
-    """一个逻辑模型名（如 ``chat.default``）。
+    """一个逻辑模型名（如 ``runtime.default``）。
 
     业务只认 ``alias``，物理模型由配置决定 —— 换模型不改业务代码（FR-G-02）。
     """

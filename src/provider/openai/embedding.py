@@ -5,7 +5,10 @@
 1. **返回顺序**。OpenAI 的 ``data`` 数组带 ``index`` 字段，且**不保证与入参同序**
    （并发批处理所致）。按数组顺序直接取，会让第 7 条的向量配到第 8 条文本上 ——
    这**不会抛任何异常**，只会让检索结果悄悄变差。
-   所以这里一律按 ``index`` 重排后再返回。
+   所以这里按 ``index`` 重排后再返回 —— **但只在 ``index`` 可信时**：
+   实测有的厂商（SiliconFlow 的 ``Qwen/Qwen3-VL-Embedding-8B``）批量 ≥9 条时
+   ``index`` 会按 8 条分片重置，而数组顺序本身是对的。此时照常重排反而会把
+   一份正确的响应搅成错位的，同样不报错 —— 详见 :func:`_order_by_index`。
 
 2. **部分失败**（``FR-P-07``）。批量请求中某一条失败时，**整批失败并标明失败下标**，
    不得返回短一截的结果 —— 同上，短一截会引发静默错位。
@@ -24,6 +27,52 @@ from provider.types import Capability, EmbeddingResult, Usage
 __all__ = ["OpenAIEmbeddingModel"]
 
 _log = logging.getLogger(__name__)
+
+
+def _order_by_index(data: Sequence[Any]) -> list[Any]:
+    """按 ``index`` 重排响应项；**``index`` 不可信时退回数组顺序**。
+
+    **为什么不能无脑 ``sorted(key=index)``**（真实厂商实测踩到的坑）：
+    SiliconFlow 的 ``Qwen/Qwen3-VL-Embedding-8B`` 在批量 ≥9 条时，``index`` 会按
+    **8 条分片重置** —— 9 条返回 ``[0..7, 0]``、10 条返回 ``[0..7, 0, 1]``，
+    而**数组顺序本身是正确的**。此时 Python 的稳定排序会把重复 key 的元素排到前面
+    （``[e0, e8, e1, ...]``），于是一份**本来正确**的响应被"重排"成错位的，
+    且不抛任何异常 —— 正是本模块要防的那种静默错位，只不过元凶是防御代码自己。
+
+    判据因此收紧为：**``index`` 必须构成 ``0..n-1`` 的完整排列**才采信。
+    两种退化都退回数组顺序，但可诊断性不同：
+
+    ==========================================  ==========  ==========================
+    形态                                        行为        理由
+    ==========================================  ==========  ==========================
+    ``index`` 缺失                            静默退回    上游没提供这项信息，数组顺序
+                                                          本来就是唯一权威
+    ``index`` 存在但**不是** ``0..n-1`` 的排列  告警退回    这是异常形态（分片重置、
+                                                          重复、越界），必须可见
+    ==========================================  ==========  ==========================
+    """
+    items = list(data)
+    indices: list[int] = []
+    for item in items:
+        try:
+            indices.append(int(item.get("index")))
+        except (AttributeError, TypeError, ValueError):
+            # 缺 index（或非整数）→ 上游未提供，数组顺序即权威，无需告警。
+            return items
+
+    if sorted(indices) != list(range(len(items))):
+        _log.warning(
+            "上游 index 不是 0..n-1 的完整排列：%s（共 %d 条）。已退回数组顺序 —— "
+            "已知 SiliconFlow 在批量 ≥9 条时 index 按 8 条分片重置，"
+            "按它重排会静默错位。",
+            indices,
+            len(items),
+        )
+        return items
+
+    return [item for _, item in sorted(zip(indices, items), key=lambda pair: pair[0])]
+
+
 
 
 class OpenAIEmbeddingModel(EmbeddingModel):
@@ -52,14 +101,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
                 trace_id=trace_id,
             )
 
-        # 按 index 重排 —— 见模块 docstring 第 1 条。缺 index 时退化为原顺序。
-        def _index_of(item: Any) -> int:
-            try:
-                return int(item.get("index"))
-            except (AttributeError, TypeError, ValueError):
-                return 1 << 30
-
-        ordered = sorted(data, key=_index_of)
+        ordered = _order_by_index(data)
         vectors = tuple(
             tuple(float(x) for x in (item.get("embedding") or [])) for item in ordered
         )

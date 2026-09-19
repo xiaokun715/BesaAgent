@@ -11,7 +11,7 @@
 PYTHONPATH=src python -m apps.cli.main doctor
 
 # 发一条消息
-PYTHONPATH=src python -m apps.cli.main --env test chat "帮我为登录接口设计测试用例"
+PYTHONPATH=src python -m apps.cli.main --env test runtime "帮我为登录接口设计测试用例"
 
 # 跑测试与依赖方向契约
 PYTHONPATH=src python -m pytest tests -q
@@ -22,7 +22,7 @@ PYTHONPATH=src lint-imports
 
 ```bash
 echo 'DEEPSEEK_API_KEY=sk-xxxxxxxx' > .env
-PYTHONPATH=src python -m apps.cli.main --env dev chat "..." --stream
+PYTHONPATH=src python -m apps.cli.main --env dev runtime "..." --stream
 ```
 
 ## 代码结构
@@ -71,10 +71,10 @@ composition →（可以依赖任何模块，但没有任何模块依赖它）
 
 | 文档 | 层级 |
 |---|---|
-| [`docs/需求说明书-provider.md`](docs/需求说明书-provider.md) | 需求 |
-| [`docs/需求说明书-gateway.md`](docs/需求说明书-gateway.md) | 需求 |
-| [`docs/架构概要设计-provider.md`](docs/架构概要设计-provider.md) | 架构 |
-| [`docs/架构概要设计-gateway.md`](docs/架构概要设计-gateway.md) | 架构 |
+| [`docs/需求说明书-provider.md`](docs/provider/需求说明书-provider.md) | 需求 |
+| [`docs/需求说明书-gateway.md`](docs/gateway/需求说明书-gateway.md) | 需求 |
+| [`docs/架构概要设计-provider.md`](docs/provider/架构概要设计-provider.md) | 架构 |
+| [`docs/架构概要设计-gateway.md`](docs/gateway/架构概要设计-gateway.md) | 架构 |
 | [`configs/README.md`](configs/README.md) | 配置 |
 
 ## 几个刻意的设计选择

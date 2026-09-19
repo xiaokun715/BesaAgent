@@ -43,9 +43,9 @@ def test_doctor_lists_aliases_and_models():
     code, out, _ = run_cli("--env", "test", "doctor")
 
     assert code == 0
-    assert "chat.default" in out
+    assert "runtime.default" in out
     assert "emb.default" in out
-    assert "chat-mock" in out
+    assert "runtime-mock" in out
 
 
 def test_doctor_shows_why_a_model_is_unavailable():
@@ -57,7 +57,7 @@ def test_doctor_shows_why_a_model_is_unavailable():
     code, out, _ = run_cli("--env", "test", "doctor")
 
     assert code == 0
-    assert "chat-openai" in out, "不可用的模型必须仍然出现在列表里"
+    assert "runtime-openai" in out, "不可用的模型必须仍然出现在列表里"
     assert "不可用" in out
     assert "OPENAI_API_KEY" in out, "原因里要指明缺哪个变量"
 
@@ -71,27 +71,27 @@ def test_doctor_does_not_leak_secrets(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# chat
+# runtime
 # --------------------------------------------------------------------------- #
 
 
 def test_chat_prints_answer_and_summary():
-    code, out, _ = run_cli("--env", "test", "chat", "帮我设计登录接口的测试用例")
+    code, out, _ = run_cli("--env", "test", "runtime", "帮我设计登录接口的测试用例")
 
     assert code == 0
     assert "[mock]" in out
     # 结果摘要必须包含这几个事实 —— 没有它们，用户无法回答「这次到底用了什么」
-    assert "chat-mock" in out
-    assert "chat.default" in out
+    assert "runtime-mock" in out
+    assert "runtime.default" in out
     assert "trace" in out
 
 
 def test_chat_stream_mode():
-    code, out, _ = run_cli("--env", "test", "chat", "讲个故事", "--stream")
+    code, out, _ = run_cli("--env", "test", "runtime", "讲个故事", "--stream")
 
     assert code == 0
     assert "[mock]" in out
-    assert "chat-mock" in out
+    assert "runtime-mock" in out
 
 
 def test_config_error_is_reported_without_traceback(monkeypatch):
@@ -104,7 +104,7 @@ def test_config_error_is_reported_without_traceback(monkeypatch):
 
     monkeypatch.setattr("apps.cli.main.open_runtime", explode)
 
-    code, _, err = run_cli("--env", "test", "chat", "x")
+    code, _, err = run_cli("--env", "test", "runtime", "x")
 
     assert code == 2, "配置错误用退出码 2，与运行时失败（1）区分开"
     assert "配置错误" in err
@@ -121,13 +121,13 @@ def test_secrets_in_config_errors_are_redacted(monkeypatch):
 
     monkeypatch.setattr("apps.cli.main.open_runtime", explode)
 
-    _, _, err = run_cli("--env", "test", "chat", "x")
+    _, _, err = run_cli("--env", "test", "runtime", "x")
     assert "sk-leaked1234567890" not in err
 
 
 def test_bad_argument_exits_with_usage():
     with pytest.raises(SystemExit) as excinfo:
-        run_cli("chat", "x", "--deadline", "not-a-number")
+        run_cli("runtime", "x", "--deadline", "not-a-number")
     assert excinfo.value.code == 2
 
 

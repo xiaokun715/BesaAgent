@@ -62,7 +62,7 @@ def two_host_settings() -> Settings:
                 "m-beta": {"provider": "openai", "vendor": "beta", "model": "beta-model"},
             },
             "gateway": {
-                "aliases": {"chat.default": {"candidates": ["m-alpha", "m-beta"]}},
+                "aliases": {"runtime.default": {"candidates": ["m-alpha", "m-beta"]}},
                 "retry": {
                     "max_attempts_per_candidate": 1,
                     "total_max_attempts": 4,
@@ -88,9 +88,9 @@ async def test_runtime_boots_from_repo_configs():
         assert any("base.yaml" in source for source in runtime.settings.sources)
         assert any("test.yaml" in source for source in runtime.settings.sources)
 
-        result = await runtime.gateway.chat("chat.default", [Message.text("user", "你好")])
+        result = await runtime.gateway.chat("runtime.default", [Message.text("user", "你好")])
         assert result.content
-        assert result.model_key == "chat-mock"
+        assert result.model_key == "runtime-mock"
         assert result.degraded is False
     finally:
         await runtime.aclose()
@@ -104,8 +104,8 @@ async def test_repo_configs_are_pinned_to_mock_for_tests():
     """
     runtime = build_runtime(env="test", env_vars={})
     try:
-        candidates = [spec.key for spec in runtime.registry.candidates("chat.default")]
-        assert candidates == ["chat-mock"]
+        candidates = [spec.key for spec in runtime.registry.candidates("runtime.default")]
+        assert candidates == ["runtime-mock"]
         embedded = [spec.key for spec in runtime.registry.candidates("emb.default")]
         assert embedded == ["emb-mock"]
     finally:
@@ -141,14 +141,14 @@ async def test_swapping_candidate_changes_model_without_code_change():
         data = dict(settings.data)
         data["gateway"] = {
             **data["gateway"],
-            "aliases": {"chat.default": {"candidates": candidates}},
+            "aliases": {"runtime.default": {"candidates": candidates}},
         }
         runtime = build_runtime(
             Settings(env="test", data=data, env_vars=settings.env_vars),
             provider_options={"transport": router.transport},
         )
         try:
-            result = await runtime.gateway.chat("chat.default", [Message.text("user", "hi")])
+            result = await runtime.gateway.chat("runtime.default", [Message.text("user", "hi")])
             return result.content
         finally:
             await runtime.aclose()
@@ -175,7 +175,7 @@ async def test_degradation_across_configured_candidates():
         two_host_settings(), provider_options={"transport": httpx.MockTransport(handler)}
     )
     try:
-        result = await runtime.gateway.chat("chat.default", [Message.text("user", "hi")])
+        result = await runtime.gateway.chat("runtime.default", [Message.text("user", "hi")])
         assert result.content == "备选答复"
         assert result.model_key == "m-beta"
         assert result.degraded is True
@@ -199,7 +199,7 @@ async def test_missing_credentials_do_not_block_startup():
                 "m-mock": {"provider": "mock", "model": "mock-llm"},
             },
             "gateway": {
-                "aliases": {"chat.default": {"candidates": ["m-alpha", "m-mock"]}}
+                "aliases": {"runtime.default": {"candidates": ["m-alpha", "m-mock"]}}
             },
         },
         env_vars={},          # 没有任何密钥
@@ -214,7 +214,7 @@ async def test_missing_credentials_do_not_block_startup():
         assert "ALPHA_KEY" in (alpha.unavailable_reason or "")
 
         # 链路自动落到 mock，照常可用
-        result = await runtime.gateway.chat("chat.default", [Message.text("user", "hi")])
+        result = await runtime.gateway.chat("runtime.default", [Message.text("user", "hi")])
         assert result.model_key == "m-mock"
 
         # **``degraded`` 是 False，这是刻意的语义区分**：
@@ -269,24 +269,24 @@ async def test_vendor_selects_endpoint_while_provider_selects_adapter():
             "providers": {"deepseek": {"base_url": "https://api.deepseek.com/v1",
                                        "api_key_env": "DEEPSEEK_API_KEY"}},
             "models": {
-                "chat-deepseek": {
+                "runtime-deepseek": {
                     "provider": "openai",      # 适配器
                     "vendor": "deepseek",      # 端点 + 凭据
-                    "model": "deepseek-chat",
+                    "model": "deepseek-runtime",
                 }
             },
-            "gateway": {"aliases": {"chat.default": {"candidates": ["chat-deepseek"]}}},
+            "gateway": {"aliases": {"runtime.default": {"candidates": ["runtime-deepseek"]}}},
         },
         env_vars={"DEEPSEEK_API_KEY": "sk-deepseek-1234567890"},
     )
 
     runtime = build_runtime(settings)
     try:
-        spec = runtime.registry.model("chat-deepseek")
+        spec = runtime.registry.model("runtime-deepseek")
         assert spec.available is True
         assert spec.provider == "deepseek", "尝试记录/报表里应显示 vendor，而不是适配器名"
 
-        provider = runtime.registry.provider("chat-deepseek")
+        provider = runtime.registry.provider("runtime-deepseek")
         assert provider.config.base_url == "https://api.deepseek.com/v1"
         # 关键：报错时要指向 DEEPSEEK_API_KEY，而不是适配器自带的 OPENAI_API_KEY。
         # 指错方向会让人去设一个完全无关的变量，然后疑惑「设了怎么还是不行」。
@@ -310,7 +310,7 @@ def test_dangling_candidate_is_rejected_at_startup():
         env="test",
         data={
             "models": {"m1": {"provider": "mock", "model": "m"}},
-            "gateway": {"aliases": {"chat.default": {"candidates": ["m1", "typo"]}}},
+            "gateway": {"aliases": {"runtime.default": {"candidates": ["m1", "typo"]}}},
         },
         env_vars={},
     )
@@ -328,7 +328,7 @@ def test_unknown_vendor_is_rejected_at_startup():
         env="test",
         data={
             "models": {"m1": {"provider": "openaii", "model": "m"}},   # 拼错
-            "gateway": {"aliases": {"chat.default": {"candidates": ["m1"]}}},
+            "gateway": {"aliases": {"runtime.default": {"candidates": ["m1"]}}},
         },
         env_vars={},
     )
@@ -344,7 +344,7 @@ def test_unknown_strategy_is_rejected_at_startup():
         data={
             "models": {"m1": {"provider": "mock", "model": "m"}},
             "gateway": {
-                "aliases": {"chat.default": {"candidates": ["m1"], "strategy": ["cheapest"]}}
+                "aliases": {"runtime.default": {"candidates": ["m1"], "strategy": ["cheapest"]}}
             },
         },
         env_vars={},
@@ -364,13 +364,13 @@ def test_unknown_alias_lists_what_is_available():
 
     async def go() -> None:
         try:
-            await runtime.gateway.chat("chat.defualt", [Message.text("user", "hi")])
+            await runtime.gateway.chat("runtime.defualt", [Message.text("user", "hi")])
         finally:
             await runtime.aclose()
 
     with pytest.raises(UnknownAliasError) as excinfo:
         asyncio.run(go())
-    assert "chat.default" in str(excinfo.value)
+    assert "runtime.default" in str(excinfo.value)
 
 
 # --------------------------------------------------------------------------- #
@@ -381,7 +381,7 @@ def test_unknown_alias_lists_what_is_available():
 async def test_runtime_is_async_context_manager():
     async with build_runtime(env="test", env_vars={}) as runtime:
         assert isinstance(runtime, Runtime)
-        result = await runtime.gateway.chat("chat.default", [Message.text("user", "hi")])
+        result = await runtime.gateway.chat("runtime.default", [Message.text("user", "hi")])
         assert result.content
     # 退出后连接已释放；再关一次不应抛错（幂等）
     await runtime.aclose()

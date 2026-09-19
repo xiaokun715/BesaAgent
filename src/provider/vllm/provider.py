@@ -1,7 +1,7 @@
 """vLLM 厂商描述。
 
 **没有 ``embedding.py``，且这不是遗漏**（架构概要设计-provider §3.3）：
-vLLM 部署的通常是 chat 模型，向量化走不到它。
+vLLM 部署的通常是 runtime 模型，向量化走不到它。
 
 这一条直接推导出契约上的一个要求：``embedding_model()`` 必须能表达「本厂商不支持」。
 本类**不覆写**它，因此继承 ``Provider.embedding_model()`` 的默认行为 ——

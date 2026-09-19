@@ -165,7 +165,7 @@ def has_any_image(messages: Sequence[Message]) -> bool:
 class Capability(str, Enum):
     """模型能力。``src/gateway`` 的路由与本地拦截都以它为依据（FR-P-08）。"""
 
-    CHAT = "chat"
+    CHAT = "runtime"
     STREAM = "stream"
     TOOLS = "tools"
     JSON = "json"
@@ -180,12 +180,12 @@ def _parse_capabilities(
 
     **两种写法语义不同，这不是风格选择而是硬约束**：:
 
-        capabilities: [chat, stream, tools]         # 列表 = 完整声明，**替换**厂商默认
+        capabilities: [runtime, stream, tools]         # 列表 = 完整声明，**替换**厂商默认
         capabilities: {vision: true}                # 映射 = 增量，**叠加**在厂商默认之上
 
-    差异的来源很实际：``vllm`` 的默认能力只有 ``chat`` + ``stream``，
+    差异的来源很实际：``vllm`` 的默认能力只有 ``runtime`` + ``stream``，
     用户想**再加**一个 ``tools`` 时写 ``{tools: true}`` ——
-    若按「替换」解释，他就会意外丢掉 ``chat``，得到一个连对话都不支持、
+    若按「替换」解释，他就会意外丢掉 ``runtime``，得到一个连对话都不支持、
     且报错信息完全指不到配置的模型。
 
     Returns:

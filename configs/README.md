@@ -55,7 +55,7 @@ DeepSeek / SiliconFlow / Moonshot 都是：
   chat-deepseek:
     provider: openai        # 适配器：OpenAI 兼容形状
     vendor: deepseek        # 端点与凭据：取自 providers.deepseek
-    model: deepseek-chat
+    model: deepseek-runtime
 ```
 
 没有 `vendor` 的话就只能二选一：要么共享真 OpenAI 的 `base_url`（错），
@@ -64,7 +64,7 @@ DeepSeek / SiliconFlow / Moonshot 都是：
 #### `capabilities:` 的两种写法语义不同
 
 ```yaml
-capabilities: [chat, stream, tools]     # 列表 = 完整声明，**替换**厂商默认
+capabilities: [runtime, stream, tools]     # 列表 = 完整声明，**替换**厂商默认
 capabilities: {vision: true}            # 映射 = 增量，**叠加**在厂商默认之上
 ```
 
@@ -78,7 +78,7 @@ capabilities: {vision: true}            # 映射 = 增量，**叠加**在厂商�
   emb-dashscope:
     provider: dashscope
     model: text-embedding-v3
-    capabilities: [embedding]        # ← 不收窄会继承 dashscope 的完整能力集（含 chat）
+    capabilities: [embedding]        # ← 不收窄会继承 dashscope 的完整能力集（含 runtime）
 ```
 
 不收窄的后果是**对话请求可能被路由到 `text-embedding-v3`**，
@@ -90,7 +90,7 @@ capabilities: {vision: true}            # 映射 = 增量，**叠加**在厂商�
 gateway:
   aliases:
     chat.default:
-      candidates: [chat-deepseek, chat-qwen, chat-mock]   # 顺序即优先级
+      candidates: [runtime-deepseek, runtime-qwen, runtime-mock]   # 顺序即优先级
       strategy: [capability, priority]
 ```
 
@@ -113,13 +113,13 @@ gateway:
 PYTHONPATH=src python -m apps.cli.main doctor
 
 # 发一条消息（默认走 mock，无需任何密钥）
-PYTHONPATH=src python -m apps.cli.main --env test chat "帮我为登录接口设计测试用例"
+PYTHONPATH=src python -m apps.cli.main --env test runtime "帮我为登录接口设计测试用例"
 
 # 用真实厂商：把密钥写进仓库根 .env
 cat > .env <<'EOF'
 DEEPSEEK_API_KEY=sk-xxxxxxxx
 EOF
-PYTHONPATH=src python -m apps.cli.main --env dev chat "..." --stream
+PYTHONPATH=src python -m apps.cli.main --env dev runtime "..." --stream
 ```
 
 **没有密钥也能跑通全链路** —— 缺密钥只让对应模型标记为「不可用」

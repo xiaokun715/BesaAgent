@@ -104,16 +104,16 @@ class Settings:
         """按**点分路径**取值：``cfg.get("gateway.retry.total_max_attempts")``。
 
         **支持键名本身含点的情况**，这对本仓库是必需的：
-        逻辑模型名写作 ``chat.default`` / ``emb.default``，于是
-        ``cfg.get("gateway.aliases.chat.default.candidates")`` 里的
-        ``chat.default`` 是一个**键**，不是两级路径。
+        逻辑模型名写作 ``runtime.default`` / ``emb.default``，于是
+        ``cfg.get("gateway.aliases.runtime.default.candidates")`` 里的
+        ``runtime.default`` 是一个**键**，不是两级路径。
 
         取法是**贪心最长匹配**：每一层先尝试用尽可能多的段拼成一个键，
         拼不出来再退一格。于是上面那个路径会这样解析::
 
-            gateway → aliases → "chat.default" → candidates
+            gateway → aliases → "runtime.default" → candidates
 
-        歧义时（同时存在 ``chat`` 与 ``chat.default`` 两个键）取**更长**的那个 ——
+        歧义时（同时存在 ``runtime`` 与 ``runtime.default`` 两个键）取**更长**的那个 ——
         更具体的匹配优先级更高，这也符合「键里带点是有意为之」的约定。
 
         路径不存在返回 ``default``；路径**中途**遇到非映射（比如把

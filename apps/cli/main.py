@@ -3,8 +3,8 @@
 ::
 
     PYTHONPATH=src python -m apps.cli.main doctor
-    PYTHONPATH=src python -m apps.cli.main chat "帮我为登录接口设计测试用例"
-    PYTHONPATH=src python -m apps.cli.main --env dev chat "..." --stream
+    PYTHONPATH=src python -m apps.cli.main runtime "帮我为登录接口设计测试用例"
+    PYTHONPATH=src python -m apps.cli.main --env dev runtime "..." --stream
 
 **入口只做三件事**：解析参数、装配运行时、把活派给子命令。
 所有业务逻辑在 ``commands/`` 里，所有渲染在 ``presentation/`` 里 ——

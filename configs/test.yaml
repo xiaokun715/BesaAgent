@@ -16,7 +16,7 @@ postgres:
 gateway:
   aliases:
     chat.default:
-      candidates: [chat-mock]
+      candidates: [runtime-mock]
       strategy: [capability, priority]
 
     emb.default:

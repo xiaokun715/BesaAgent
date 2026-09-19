@@ -6,7 +6,7 @@
 """
 
 from __future__ import annotations
-
+import llama_index
 import math
 
 import pytest

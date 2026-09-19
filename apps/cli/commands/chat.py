@@ -1,4 +1,4 @@
-"""``besa chat`` —— 发一条消息。
+"""``besa runtime`` —— 发一条消息。
 
 **这个文件是「provider/gateway 契约够不够用」的试金石**：
 它只写业务意图（问一句话、要个回答），不出现任何厂商名、模型名、重试逻辑。
@@ -18,11 +18,11 @@ from provider.types import Message
 
 __all__ = ["add_parser", "run"]
 
-ALIAS = "chat.default"
+ALIAS = "runtime.default"
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
-    parser = subparsers.add_parser("chat", help="向默认模型发一条消息")
+    parser = subparsers.add_parser("runtime", help="向默认模型发一条消息")
     parser.add_argument("message", help="用户消息")
     parser.add_argument("--session", default=None, help="会话标识（用于用量归集）")
     parser.add_argument("--stream", action="store_true", help="流式输出")

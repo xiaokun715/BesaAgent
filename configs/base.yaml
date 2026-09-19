@@ -25,7 +25,7 @@ redis:
 #   vendor   = 用哪一段**端点与凭据**
 # 二者默认相同，所以普通厂商只写 provider 就行。
 # 需要分开的是那种「走 OpenAI 兼容协议、但端点和密钥是自己的」厂商 ——
-# DeepSeek / SiliconFlow / Moonshot 都是，见下面的 models.chat-deepseek。
+# DeepSeek / SiliconFlow / Moonshot 都是，见下面的 models.runtime-deepseek。
 # --------------------------------------------------------------------------- #
 providers:
   mock:
@@ -61,7 +61,7 @@ models:
     max_tokens: 2048
     # mock 厂商的默认能力集是「什么都会」，显式收窄才能反映本模型的用途 ——
     # 也才不会在启动时触发「既对话又向量化」的告警。
-    capabilities: [chat, stream, tools, json, vision]
+    capabilities: [runtime, stream, tools, json, vision]
 
   emb-mock:
     provider: mock
@@ -92,7 +92,7 @@ models:
   chat-deepseek:
     provider: openai        # 适配器：DeepSeek 是 OpenAI 兼容形状
     vendor: deepseek        # 端点与凭据：取自 providers.deepseek
-    model: deepseek-chat
+    model: deepseek-runtime
     temperature: 0.0
     max_tokens: 8192
     timeout_s: 120
@@ -100,7 +100,7 @@ models:
   emb-dashscope:
     provider: dashscope
     model: text-embedding-v3
-    # **必须显式收窄**：不收窄会继承 dashscope 的完整能力集（含 chat），
+    # **必须显式收窄**：不收窄会继承 dashscope 的完整能力集（含 runtime），
     # 于是对话请求可能被路由到 text-embedding-v3，然后在上游得到一个看不懂的 400。
     # 列表 = 完整声明（替换厂商默认），这正是这里要的语义。
     capabilities: [embedding]
@@ -114,20 +114,20 @@ models:
     model: Qwen3-32B
     temperature: 0.0
     # 自建服务的能力**由部署决定**（加载了什么模型、开了哪些启动参数），
-    # 编译期不可能知道 —— 所以必须在这里声明，默认只有 chat + stream。
+    # 编译期不可能知道 —— 所以必须在这里声明，默认只有 runtime + stream。
     capabilities: { tools: true, json: true }
 
 # --------------------------------------------------------------------------- #
 # gateway：逻辑名 → 候选链，以及重试/降级/限流/熔断/计价
 #
-# 业务只认 alias（chat.default / emb.default），物理模型完全由这里决定 ——
+# 业务只认 alias（runtime.default / emb.default），物理模型完全由这里决定 ——
 # 换模型 = 改配置，业务代码零改动。
 # --------------------------------------------------------------------------- #
 gateway:
   aliases:
     chat.default:
       # 顺序即优先级：前面的先试，失败才降级到后面的
-      candidates: [chat-mock]
+      candidates: [runtime-mock]
       strategy: [capability, priority]
 
     emb.default:

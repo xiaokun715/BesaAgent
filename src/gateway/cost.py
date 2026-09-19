@@ -87,7 +87,19 @@ class CostSheet:
 
     # ---------------------------------------------------------------- 计算
     def calc(self, model_key: str, usage: Usage) -> Cost:
-        """计算一次调用的成本。
+        r"""计算一次调用的成本。
+
+        **本串必须保留 raw 前缀**（`r` + 三引号）：下面 Returns 里的
+        ``:class:`Cost`\ `` 中那个反斜杠是 **reStructuredText 的行内转义**
+        （挡住角色名后面的字符，反斜杠加空格让「。」不被吞进角色名），不是 Python 转义。
+        去掉 `r` 会触发 DeprecationWarning ``invalid escape sequence``，
+        而本仓库在 ``pyproject.toml`` 里配了
+        ``filterwarnings = ["error::DeprecationWarning"]`` —— 它会把这条编译期警告
+        **升级成 SyntaxError**，症状是「``import gateway.cost`` 直接失败」。
+
+        这个症状极具误导性，且**依赖字节码缓存才复现得了**：若 ``__pycache__`` 里
+        已有可用的 ``.pyc``，Python 不会重新编译，警告也就无从触发 —— 于是
+        「本地一直是绿的，换台机器/清掉缓存就红」。别再把它「顺手改成普通字符串」。
 
         Args:
             model_key: 模型键（与配置里的 ``models:`` 一致）。

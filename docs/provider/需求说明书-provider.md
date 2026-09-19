@@ -373,7 +373,7 @@ models:
   chat-deepseek:
     provider: openai        # 适配器：OpenAI 兼容形状
     vendor: deepseek        # 端点与凭据：取自 providers.deepseek
-    model: deepseek-chat
+    model: deepseek-runtime
   ```
 - `R-3` `capabilities` 可被配置覆盖（反映同一厂商不同模型的真实差异）；
 - `R-4` 配置缺失时给出**可定位的**错误（指出缺哪个字段、哪个模型）；

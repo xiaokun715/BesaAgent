@@ -2,7 +2,7 @@
 
 **分层解析**（``FR-G-02``）::
 
-    alias（业务写）      "chat.default"
+    alias（业务写）      "runtime.default"
       └─ candidates       ["gpt-4o-mini", "qwen-plus"]      ← 配置决定
            └─ ModelSpec   provider=openai, model=gpt-4o-mini
                 └─ Provider 实例（连接复用，``FR-P-13``）

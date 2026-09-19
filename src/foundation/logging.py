@@ -138,7 +138,7 @@ def setup_logging(
     Args:
         level: 级别名或数值。``None`` 时取 ``BESA_LOG_LEVEL``，再缺省 ``INFO``。
         stream: 输出目标。默认 stderr —— 不占 stdout，这样
-            ``besa chat "问题" > answer.txt`` 能拿到干净的回答。
+            ``besa runtime "问题" > answer.txt`` 能拿到干净的回答。
 
     **只移除自己上次装的 handler**，不动调用方（或测试框架）装的 ——
     ``logging.basicConfig`` 式的「清空重来」会让 pytest 的 caplog 失效。

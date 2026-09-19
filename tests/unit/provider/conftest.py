@@ -37,7 +37,7 @@ OPENAI_CFG: dict[str, Any] = {
 }
 
 ALL_CAPS = {
-    "chat": True,
+    "runtime": True,
     "stream": True,
     "tools": True,
     "json": True,

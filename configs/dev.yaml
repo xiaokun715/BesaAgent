@@ -14,7 +14,7 @@ logging:
 gateway:
   aliases:
     chat.default:
-      candidates: [chat-deepseek, chat-qwen, chat-mock]
+      candidates: [runtime-deepseek, runtime-qwen, runtime-mock]
       strategy: [capability, priority]
 
     emb.default:

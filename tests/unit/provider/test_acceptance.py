@@ -278,7 +278,7 @@ async def test_capabilities_are_overridable_from_config():
             "provider": "vllm",
             "model": "Qwen",
             "base_url": "http://127.0.0.1:8000/v1",
-            "capabilities": ["chat", "stream", "tools"],
+            "capabilities": ["runtime", "stream", "tools"],
         },
         env={},
     )
@@ -288,9 +288,9 @@ async def test_capabilities_are_overridable_from_config():
 def test_capability_list_replaces_and_mapping_overlays():
     """**列表 = 完整声明（替换）；映射 = 增量（叠加在厂商默认之上）**。
 
-    这条语义差异是必需的，不是风格选择：``vllm`` 的默认能力只有 ``chat`` + ``stream``，
+    这条语义差异是必需的，不是风格选择：``vllm`` 的默认能力只有 ``runtime`` + ``stream``，
     用户想再加 ``tools`` 时写 ``{tools: true}`` —— 若按「替换」解释，
-    他会意外丢掉 ``chat``，得到一个连对话都不支持、且报错完全指不到配置的模型。
+    他会意外丢掉 ``runtime``，得到一个连对话都不支持、且报错完全指不到配置的模型。
     """
     base = {"provider": "vllm", "model": "Qwen", "base_url": "http://127.0.0.1:8000/v1"}
 
@@ -299,7 +299,7 @@ def test_capability_list_replaces_and_mapping_overlays():
 
     overlaid = build_provider({**base, "capabilities": {"tools": True}}, env={})
     assert overlaid.supports(Capability.TOOLS), "映射加上了 tools"
-    assert overlaid.supports(Capability.CHAT), "且**没有**丢掉默认的 chat"
+    assert overlaid.supports(Capability.CHAT), "且**没有**丢掉默认的 runtime"
     assert overlaid.supports(Capability.STREAM)
 
     removed = build_provider({**base, "capabilities": {"stream": False}}, env={})
@@ -597,7 +597,7 @@ async def test_image_part_is_encoded_for_vision_models():
             "provider": "openai",
             "model": "gpt-4o",
             "base_url": "https://api.openai.com/v1",
-            "capabilities": ["chat", "vision"],
+            "capabilities": ["runtime", "vision"],
         },
         transport=httpx.MockTransport(handler),
         env=OPENAI_ENV,
@@ -628,7 +628,7 @@ async def test_base64_image_becomes_data_uri():
             "provider": "openai",
             "model": "gpt-4o",
             "base_url": "https://api.openai.com/v1",
-            "capabilities": ["chat", "vision"],
+            "capabilities": ["runtime", "vision"],
         },
         transport=httpx.MockTransport(handler),
         env=OPENAI_ENV,

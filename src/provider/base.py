@@ -2,9 +2,9 @@
 
 **本模块不 import 任何厂商子包**（需求说明书-provider NFR-P-06）。
 
-**为什么 ``chat`` 是抽象方法，而不是「模板方法 + 抽象钩子」**
-（``besa-iv-kb`` 实测踩过的坑）：测试替身只需要实现 ``chat`` 本身。
-若把 ``chat`` 做成模板方法、把 ``_build_payload`` 做成抽象钩子，
+**为什么 ``runtime`` 是抽象方法，而不是「模板方法 + 抽象钩子」**
+（``besa-iv-kb`` 实测踩过的坑）：测试替身只需要实现 ``runtime`` 本身。
+若把 ``runtime`` 做成模板方法、把 ``_build_payload`` 做成抽象钩子，
 假实现就被迫实现一个它**根本用不到**的 HTTP 载荷构造器 ——
 后果是**假实现无法实例化**，而 mock 恰恰是 CI 能在无密钥环境跑通的前提（FR-P-15）。
 
@@ -342,7 +342,7 @@ class Provider(ABC):
 
         **配置里显式给了 ``api_key_env`` 就以它为准，不再回退到适配器的类属性。**
         这一条很容易写反，而写反的后果是**错误信息指错方向**：
-        ``chat-deepseek`` 走的是 openai 适配器（OpenAI 兼容协议），
+        ``runtime-deepseek`` 走的是 openai 适配器（OpenAI 兼容协议），
         凭据来自 ``providers.deepseek.api_key_env = DEEPSEEK_API_KEY``。
         若类属性 ``OPENAI_API_KEY`` 还能兜底并出现在报错里，
         用户会去设一个完全无关的变量，然后疑惑「设了怎么还是不行」。
