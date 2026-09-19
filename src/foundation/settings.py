@@ -14,7 +14,7 @@ base 是全环境共享的默认值，各 env 只覆写差异。``test.yaml`` �
 **插值**：``${VAR}`` / ``${VAR:-fallback}`` 在**加载期**解析::
 
     postgres:
-      dsn: ${BESA_POSTGRES_DSN:-postgresql+asyncpg://besa:besa@127.0.0.1:5432/besa}
+      dsn: ${BESA_POSTGRES_DSN:-postgresql+asyncpg://besa:besa@127.0.0.1:5432/besa_agent}
 
 ``${VAR}`` 缺省且变量未设置时**抛错**，不静默变成空串 —— 见 :func:`_interpolate`。
 

@@ -10,7 +10,9 @@ logging:
   level: INFO
 
 postgres:
-  dsn: ${BESA_POSTGRES_DSN:-postgresql+asyncpg://besa:besa@127.0.0.1:5432/besa}
+  # 库名是 besa_agent：本机 5432 上还有一个 `besa` 库，属于另一个项目（besa-iv-kb），
+  # 两边共用会让 alembic_version 互相覆盖。详见 docs/repo/需求说明书-repo.md §7。
+  dsn: ${BESA_POSTGRES_DSN:-postgresql+asyncpg://besa:besa@127.0.0.1:5432/besa_agent}
 
 redis:
   url: ${BESA_REDIS_URL:-redis://127.0.0.1:6379/0}
