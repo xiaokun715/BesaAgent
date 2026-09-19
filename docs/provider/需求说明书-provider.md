@@ -30,7 +30,7 @@ BesaAgent 是面向**软件测试全流程**的多智能体平台（需求 → �
 |---|---|---|
 | `src/agent/` | chat（推理、工具调用） | 高频、要求结构化输出 |
 | `src/multiagent/` | chat（多 agent 并发 / 辩论 / 投票） | **并发峰值高**，对限流和成本最敏感 |
-| `src/chat/` | chat（流式） | 首字延迟敏感，必须 SSE |
+| `src/runtime/` | chat（流式） | 首字延迟敏感，必须 SSE |
 | `src/context/` `src/memory/` | embedding | 批量、维度必须固定 |
 | `src/skill/` `src/tool/` | chat 的 tool calling | 依赖厂商工具调用协议 |
 
@@ -69,7 +69,7 @@ BesaAgent 是面向**软件测试全流程**的多智能体平台（需求 → �
 | 限流 / 配额 | `src/gateway/rate_limit.py` | 同上 |
 | 成本核算 / 记账 | `src/gateway/cost.py` `usage.py` | provider 只透传 usage 原始值，不定价 |
 | Prompt 模板、上下文裁剪 | `src/context/` | 与厂商无关 |
-| 会话历史存储 | `src/chat/` `src/repo/` | 与厂商无关 |
+| 会话历史存储 | `src/runtime/` `src/repo/` | 与厂商无关 |
 | 工具定义与执行 | `src/tool/` `src/skill/` | provider 只负责**传输**工具调用协议 |
 | 向量存储与检索 | `src/repo/` + 外部知识库 | provider 只产出向量，不存不管检索 |
 | 事件发布 | `src/event/` | provider **不发事件**（发了就是跨层耦合）；由 gateway 在边界上发 |
@@ -370,7 +370,7 @@ models:
   DeepSeek / SiliconFlow / Moonshot 都是：
 
   ```yaml
-  chat-deepseek:
+  runtime-deepseek:
     provider: openai        # 适配器：OpenAI 兼容形状
     vendor: deepseek        # 端点与凭据：取自 providers.deepseek
     model: deepseek-runtime

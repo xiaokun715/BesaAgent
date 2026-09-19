@@ -529,7 +529,7 @@ sequenceDiagram
 | **R-2** | **厂商默认能力集** | openai / dashscope 的默认集含 `EMBEDDING` | **移除 `EMBEDDING`**（与既有的移除 `VISION` 同理） | 「这个模型能不能向量化」是**模型**的事实而非厂商的事实。留在默认集里会让 `emb.default` 的候选出现只能对话的模型，被选中后在上游报 400 —— 一个指不到配置的错 |
 | **R-3** | **`mock/` 子包** | 原结构无 `mock/`（见 §8 D-A） | 已补齐 `provider/mock/{provider,llm,embedding}.py`，无 `client.py` | 见 §8 D-A |
 | **R-4** | **跨厂商复用 `client.py`** | §1.2「厂商层禁止依赖其它厂商子包」 | 允许复用 `client.py` 与已确认 OpenAI 兼容形状的实现；**仍禁止**复用 `provider.py` | 按字面执行会让连接池 / SSE 拆行 / 错误整形存在三份然后跑偏。判据是「这段代码里有没有厂商语义」。全文见 `src/provider/openai/__init__.py` |
-| **R-5** | **`api_key_env` 的优先级** | FR-P-12 的四级链，默认回退到适配器类属性 | 配置里显式给了 `api_key_env` 就**不再回退**到类属性 | 回退会让错误信息指错方向：`chat-deepseek` 走 openai 适配器，报错却说「设置 OPENAI_API_KEY」，用户会去设一个完全无关的变量 |
+| **R-5** | **`api_key_env` 的优先级** | FR-P-12 的四级链，默认回退到适配器类属性 | 配置里显式给了 `api_key_env` 就**不再回退**到类属性 | 回退会让错误信息指错方向：`runtime-deepseek` 走 openai 适配器，报错却说「设置 OPENAI_API_KEY」，用户会去设一个完全无关的变量 |
 | **R-6** | **退避等待受 deadline 约束** | FR-P-11 只约束重试次数 | 追加：`delay > budget.remaining_s()` 时**不再重试** | 不判这条，`1+2+4+8…` 的指数退避能把 10 秒预算撑成几分钟 —— 总超时在长尾路径上形同虚设 |
 | **R-7** | **流式错误归一化** | FR-P-09 未明确流式中途断开的处理 | `HttpClient._stream_impl` 全程包在归一化里，**不只是建连那一下** | 长连接中途断开（`ReadError` / `RemoteProtocolError`）是最常见的流式故障，且发生在 `async for` **内部**。漏掉这层，上层收到的是原始 `httpx` 异常，既无 `retryable` 语义也带着传输层内部细节 |
 | **R-8** | **`stream_sse` 返回形状** | 未明确 | `Client.stream_sse` 与 `ChatModel.stream_chat` 都是**普通 `def`** 返回异步迭代器 | `async def` + `yield` 会推迟到首次迭代才执行代码，让「请求了不支持流式的模型」这个错误发生在离调用点很远的地方（§4.1） |

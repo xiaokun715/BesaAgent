@@ -5,7 +5,7 @@
 | 文档层级 | **需求层**（第一篇）。后续：《架构概要设计》→《详细设计与任务清单》 |
 | 覆盖范围 | `src/gateway/` 全部 9 个文件 |
 | 上游依赖 | `src/provider/`（契约）、`src/event/`（事件总线，可选） |
-| 下游消费 | `src/agent/`、`src/multiagent/`、`src/chat/`、`src/memory/`、`src/context/` |
+| 下游消费 | `src/agent/`、`src/multiagent/`、`src/runtime/`、`src/memory/`、`src/context/` |
 | 状态 | 待评审 |
 
 ---
@@ -73,7 +73,7 @@
 |---|---|
 | 厂商 API 请求构造 / 响应解析 / SSE 解析 | `src/provider/` |
 | Prompt 模板、上下文裁剪与压缩 | `src/context/` |
-| 会话历史、消息持久化 | `src/chat/` `src/repo/` |
+| 会话历史、消息持久化 | `src/runtime/` `src/repo/` |
 | 用量与成本的**落库** | `src/repo/`（gateway 只**产生**用量与成本数据并交给 `repo`） |
 | 工具定义与执行 | `src/tool/` `src/skill/` |
 | 事件总线的实现 | `src/event/`（gateway 只**发**事件） |
@@ -143,11 +143,11 @@ flowchart TD
 
 **要求**：业务用**逻辑名**（alias）请求模型，物理模型由配置决定。
 
-- 逻辑名形如 `chat.default` / `chat.reasoning` / `emb.default`，表达的是**用途**而非型号；
+- 逻辑名形如 `runtime.default` / `runtime.reasoning` / `emb.default`，表达的是**用途**而非型号；
 - 换模型 = 改配置，**业务代码零改动**；
 - 请求未注册的逻辑名 → 报错并**列出可用的逻辑名**（便于发现拼写错误）。
 
-**验收点**：把 `chat.default` 从 A 模型改配为 B 模型，全仓库代码零改动且行为随之改变。
+**验收点**：把 `runtime.default` 从 A 模型改配为 B 模型，全仓库代码零改动且行为随之改变。
 
 ### 5.2 选择与路由
 
@@ -310,10 +310,10 @@ flowchart TD
 gateway:
   # 逻辑名 → 用途。业务只认左边，右边随便换
   aliases:
-    chat.default:
+    runtime.default:
       candidates: [gpt-4o-mini, qwen-plus, local-qwen]
       strategy: [capability, priority]     # 可组合，顺序即优先级
-    chat.reasoning:
+    runtime.reasoning:
       candidates: [deepseek-v4-pro, qwen-plus]
       strategy: [capability, weight]
     emb.default:
@@ -365,7 +365,7 @@ gateway:
 | # | 场景 | 期望 |
 |---|---|---|
 | B-1 | 全仓库检索 provider 的引用 | 仅 `src/gateway/` 出现 |
-| B-2 | `chat.default` 改配另一个模型 | 业务代码零改动，行为随之改变 |
+| B-2 | `runtime.default` 改配另一个模型 | 业务代码零改动，行为随之改变 |
 | B-3 | 请求未注册的逻辑名 | 报错并列出可用逻辑名 |
 | B-4 | 主候选 503、备选正常 | 返回备选结果，且**标记已降级** |
 | B-5 | 三个候选全部失败 | 抛「全部失败」，含各自的失败原因 |

@@ -13,7 +13,7 @@ logging:
 
 gateway:
   aliases:
-    chat.default:
+    runtime.default:
       candidates: [runtime-deepseek, runtime-qwen, runtime-mock]
       strategy: [capability, priority]
 

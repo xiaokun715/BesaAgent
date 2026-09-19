@@ -55,7 +55,7 @@ providers:
 #   映射 = 增量，**叠加**在厂商默认之上
 # --------------------------------------------------------------------------- #
 models:
-  chat-mock:
+  runtime-mock:
     provider: mock
     model: mock-llm
     max_tokens: 2048
@@ -70,7 +70,7 @@ models:
     capabilities: [embedding]
 
   # --- 真实厂商：按需在 <env>.yaml 里启用 ---
-  chat-openai:
+  runtime-openai:
     provider: openai
     model: gpt-4o-mini
     temperature: 0.0
@@ -82,17 +82,17 @@ models:
     backoff_s: 1.5
     capabilities: { vision: true }
 
-  chat-qwen:
+  runtime-qwen:
     provider: dashscope
     model: qwen-plus
     temperature: 0.0
     max_tokens: 8192
     timeout_s: 120
 
-  chat-deepseek:
+  runtime-deepseek:
     provider: openai        # 适配器：DeepSeek 是 OpenAI 兼容形状
     vendor: deepseek        # 端点与凭据：取自 providers.deepseek
-    model: deepseek-runtime
+    model: deepseek-chat
     temperature: 0.0
     max_tokens: 8192
     timeout_s: 120
@@ -108,7 +108,7 @@ models:
     dimension: 1024
     max_batch: 25
 
-  chat-local:
+  runtime-local:
     provider: vllm
     vendor: vllm-local
     model: Qwen3-32B
@@ -125,7 +125,7 @@ models:
 # --------------------------------------------------------------------------- #
 gateway:
   aliases:
-    chat.default:
+    runtime.default:
       # 顺序即优先级：前面的先试，失败才降级到后面的
       candidates: [runtime-mock]
       strategy: [capability, priority]
@@ -172,13 +172,13 @@ gateway:
     # 每 1K token 单价。**没配价格的模型成本标记为「未知」而不是 0** ——
     # 0 是「免费」，None 是「不知道」，混同会让成本报表静默失真。
     prices:
-      chat-openai:
+      runtime-openai:
         input: 0.001
         output: 0.002
-      chat-qwen:
+      runtime-qwen:
         input: 0.0008
         output: 0.002
-      chat-deepseek:
+      runtime-deepseek:
         input: 0.001
         output: 0.002
         cached_input: 0.0001

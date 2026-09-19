@@ -53,7 +53,7 @@ flowchart TB
     EV["src/event<br/>事件总线"]
     F["foundation<br/>settings / errors / ids / logging / container"]
     RP["src/repo<br/>（仅接收数据，不被 gateway 调用）"]
-    UP["src/agent<br/>src/multiagent<br/>src/chat 等"]
+    UP["src/agent<br/>src/multiagent<br/>src/runtime 等"]
 
     G --> R
     G --> RO
@@ -228,7 +228,7 @@ class AliasSpec:          # 一个逻辑名
 
 **过滤后为空 → 抛明确错误**（FR-G-03），错误信息必须列出**缺失的能力**：
 
-> `没有任何候选同时满足 [tools, stream, vision]；候选集 chat.default = [a(无 tools), b(无 vision)]`
+> `没有任何候选同时满足 [tools, stream, vision]；候选集 runtime.default = [a(无 tools), b(无 vision)]`
 
 **`health` 策略与 `health.allow()` 的分工**：前者是**排序偏好**，后者是**硬拦截**。
 二者都存在是刻意的 —— 排序让健康的模型优先，硬拦截保证熔断的模型不被浪费预算。
@@ -335,10 +335,10 @@ stateDiagram-v2
 ```yaml
 gateway:
   aliases:
-    chat.default:
+    runtime.default:
       candidates: [gpt-4o-mini, qwen-plus, local-qwen]
       strategy: [capability, priority]
-    chat.reasoning:
+    runtime.reasoning:
       candidates: [deepseek-v4-pro, qwen-plus]
       strategy: [capability, weight]
     emb.default:
