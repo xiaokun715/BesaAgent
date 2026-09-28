@@ -105,6 +105,26 @@ class UsageLedger:
         self._records.clear()
         return drained
 
+    def drain_dropped(self) -> int:
+        """取出并**清零**丢弃计数。与 :meth:`drain` 对称。
+
+        **为什么需要它，而不是直接读 ``dropped``**：``dropped`` 是累计值且只增不减，
+        而交付方是**周期性**调用的。直接读会让同一笔丢弃被反复上报 ——
+        「丢了 3 条」会被记成 3、6、9…… 而每一次看起来都像是新丢的。
+
+        交付方应当::
+
+            records = ledger.drain()
+            dropped = ledger.drain_dropped()      # ← 取走并清零
+            await repo.record_ledger(rows, dropped=dropped)
+
+        两个调用之间没有 await，所以不会漏掉期间产生的记录
+        （本对象只被同一个事件循环里的协程访问，见 ``record`` 的调用点）。
+        """
+        dropped = self._dropped
+        self._dropped = 0
+        return dropped
+
     # ---------------------------------------------------------------- 读
     @property
     def records(self) -> tuple[UsageRecord, ...]:

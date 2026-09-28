@@ -118,6 +118,16 @@ class Transaction:
         """把 ORM 实体加入本事务。**不提交** —— 提交由边界负责。"""
         self._session.add(instance)
 
+    def add_all(self, instances: Sequence[Any]) -> None:
+        """批量加入。**不提交**。
+
+        批量插入走这一个方法而不是循环 ``add()``，是为了让 SQLAlchemy 能把它
+        编译成一条多值 ``INSERT``（``NFR-R-06``：写放大受控）——
+        循环 add 在数据量大时会产生 N 条往返，而每条往返都是一次网络等待。
+        """
+        if instances:
+            self._session.add_all(list(instances))
+
     async def delete(self, instance: Any) -> None:
         """删除 ORM 实体。同样**不提交**。"""
         await self._session.delete(instance)

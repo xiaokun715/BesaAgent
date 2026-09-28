@@ -23,7 +23,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from composition.usage_sink import try_flush_usage
 from foundation.clock import Clock, SystemClock
+from foundation.database import Database
 from foundation.settings import Settings, load_config
 from gateway.cost import CostSheet
 from gateway.fallback import FallbackPolicy
@@ -50,9 +52,32 @@ class Runtime:
     settings: Settings
     registry: Registry
     gateway: Gateway
+    #: 持久化执行入口。**由 app 层（``apps/*/storage``）建好后注入** ——
+    #: ``src/`` 不能 import ``apps/``，所以组合根只声明它、不构造它。
+    #: ``None`` 表示这个进程不落库（如默认配置下的 CLI）。
+    database: Database | None = None
+
+    async def flush_usage(self) -> None:
+        """把 gateway 账本里的用量落库。
+
+        **必须在 ``aclose()`` 之前调用**，而 ``aclose()`` 自己也会兜一次底 ——
+        见那里的说明。
+        """
+        await try_flush_usage(self.database, self.gateway.ledger)
 
     async def aclose(self) -> None:
-        """释放全部连接。**幂等**。"""
+        """释放全部连接。**幂等**。
+
+        **顺序是有约束的**：先 flush 用量，再关连接。
+
+        ``Gateway.aclose()`` 只关 provider 的 HTTP 客户端，**不 drain 它的
+        ``UsageLedger``** —— 也就是说，不在这里补这一步的话，
+        缓冲区里的用量记录会跟着进程一起消失，而且**不会有任何错误**。
+
+        而 flush 又必须排在关连接之前：要落库的数据得先进事务，
+        连接关了就没地方写了。
+        """
+        await self.flush_usage()
         await self.gateway.aclose()
 
     async def __aenter__(self) -> Runtime:
@@ -72,6 +97,7 @@ def build_runtime(
     events: EventEmitter | None = None,
     ledger: UsageLedger | None = None,
     provider_options: Mapping[str, Any] | None = None,
+    database: Database | None = None,
 ) -> Runtime:
     """按配置装配出可用的运行时。
 
@@ -80,6 +106,10 @@ def build_runtime(
         provider_options: 原样转交给每个 provider 构造器 ——
             **测试注入 ``httpx.MockTransport`` 的入口**（``FR-P-13``）。
             生产路径不传，因此走真实网络。
+        database: 持久化执行入口。**由 app 层建好后注入** ——
+            ``src/`` 不能 import ``apps/``，所以这里只接收、不构造。
+            ``None`` 表示这个进程不落库（默认配置下的 CLI 就是这种情形），
+            此时用量记在内存里、随进程消失，与今天的 CLI 行为一致。
 
     Raises:
         SettingsError: 配置文件缺失 / 语法错误 / 插值变量未定义。
@@ -115,12 +145,13 @@ def build_runtime(
     )
 
     _log.info(
-        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s",
+        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，用量落库=%s",
         cfg.env,
         len(registry.models),
         ", ".join(sorted(registry.aliases)) or "（无）",
+        "开" if database is not None else "关（记录只留在内存）",
     )
-    return Runtime(settings=cfg, registry=registry, gateway=gateway)
+    return Runtime(settings=cfg, registry=registry, gateway=gateway, database=database)
 
 
 def _build_limiter(cfg: Mapping[str, Any] | None, clock: Clock) -> LocalRateLimiter:

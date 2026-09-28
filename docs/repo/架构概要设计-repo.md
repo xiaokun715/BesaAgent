@@ -535,6 +535,18 @@ flowchart LR
 | **RR-5** | **`SQLAlchemy` 移出 `postgres` 可选依赖** | `postgres` 组里有 `SQLAlchemy` | 进主依赖；`postgres` 组只留 `asyncpg` / `alembic` | SQLAlchemy 是**与方言无关**的抽象层，CLI 的 SQLite 路径也要用它。留在可选组会让「CLI 的默认存储」变成可选能力，与「无数据库即可跑通」这条项目级前提冲突 |
 | **RR-6** | **`CREATE EXTENSION vector` 需要超级用户；首次部署是一次性前置** | 设计稿只说「迁移里建，幂等」 | 迁移里**保留** `CREATE EXTENSION IF NOT EXISTS vector`；但部署文档必须写明：**首次部署要先由超级用户建一次** | 实测：`vector.control` 里**没有 `trusted = true`**，所以 `besa` 角色直接建会报「只有超级用户能创建扩展」。而扩展**已存在**时，`besa` 跑 `CREATE EXTENSION IF NOT EXISTS` **能通过** —— `IF NOT EXISTS` 在权限检查之前短路。所以迁移的写法不用改，但**漏掉这一步会让首次部署失败**，且报错信息指向「权限」而不是「你少做了一步」 |
 
+### 第二批：交付链路落地时发现的（步骤 2）
+
+| # | 修订 | 原稿 | 现在 | 理由 |
+|---|---|---|---|---|
+| **RR-7** | **`UsageLedger` 需要一个「取走并清零」的丢弃计数出口** | 设计稿只说「`dropped` 必须有出口」 | 新增 `UsageLedger.drain_dropped()`，与 `drain()` 对称 | 交付方是**周期性**调用的，而 `dropped` 是**只增不减的累计值**。直接读会让同一笔丢弃被反复上报 ——「丢了 3 条」被记成 3、6、9…… 每一次看起来都像新丢的。**「有出口」不够，还得是「能被消费的出口」** |
+| **RR-8** | **`Runtime.aclose()` 必须先 flush 用量再关连接** | 设计稿只在 §5 提到「三个可能丢数据的时机」 | `Runtime.flush_usage()` + `aclose()` 里显式先调 | `Gateway.aclose()` 关的是 provider 的 HTTP 客户端，**不 drain 它的账本**。不补这一步，缓冲区里的记录会跟着进程消失，且**不会有任何错误**。顺序也不能换：flush 要进事务，连接关了就没地方写 |
+| **RR-9** | **`Transaction` 需要 `add_all`** | 只有 `add` | 新增 `add_all()` | 批量落库（`NFR-R-06`）要用它。循环 `add()` 在大数据量下会产生 N 条往返，而每条往返都是一次网络等待 |
+| **RR-10** | **批量写的效果**两个后端不同 | 设计稿笼统写「一次事务多行」 | Postgres：N 行 → **1 次 executemany**；SQLite：N 行 → **N 次 INSERT** | 实测。SQLite 路径下 SQLAlchemy 拿不到它需要的 RETURNING 支持，退化成逐行。**CLI 的数据量极小且库在内存里，这个差异可以接受** —— 但不能假装它不存在：`NFR-R-06` 的达标范围是 Postgres |
+| **RR-11** | **`alembic.ini` 必须纯 ASCII** | 原稿写了中文注释 | 改成 ASCII，中文说明挪进 `migrations/env.py` | 实测：Alembic 用 `encoding="locale"` 读 ini，而中文 Windows 的 locale 是 **cp936**。UTF-8 中文会让 alembic 在启动前就死：`UnicodeDecodeError: 'gbk' codec can't decode byte`。`PYTHONUTF8=1` 能绕过，但让构建工具依赖环境变量太脆 |
+| **RR-12** | **CLI 默认不注入 `database`**（有意，不是漏接） | 设计稿说 CLI 用「内存实现」 | CLI 默认 `Runtime.database is None`，用量只留内存 | 内存 SQLite **没有表**（CLI 不走迁移），贸然注入会让每次 `flush_usage()` 都以「表不存在」失败并刷告警 —— 一个每次都报错、但功能其实正常的告警比没有告警更糟。需要持久化时显式注入 |
+| **RR-13** | **无数据库时仍要 drain，并告警一次** | 设计稿未涉及 | `try_flush_usage(None, ledger)` 取走记录 + 每进程告警一次 | 不 drain 的话账本会涨到 `max_records` 然后**静默丢弃** —— 正是本项目最不能接受的失败。告警一次是「看得到但不吵」的取舍点 |
+
 ### 一个让整个向量设计成立的事实
 
 实测确认：**PostgreSQL 的 DDL 是事务性的** —— 在一个事务里 `CREATE TABLE` 然后回滚，表**不会存在**。

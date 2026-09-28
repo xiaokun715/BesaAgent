@@ -19,13 +19,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from sqlalchemy import MetaData
+from sqlalchemy import BigInteger, Integer, MetaData
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 __all__ = [
     "NAMING_CONVENTION",
     "Base",
+    "BigIntPk",
     "create_engine",
     "create_session_factory",
     "dsn_scheme",
@@ -54,6 +55,18 @@ class Base(DeclarativeBase):
     """
 
     metadata = MetaData(naming_convention=dict(NAMING_CONVENTION))
+
+
+#: 自增主键的列类型。**SQLite 上必须退化成 ``INTEGER``**。
+#:
+#: 这不是洁癖：SQLite 里只有 ``INTEGER PRIMARY KEY`` 是 rowid 的别名、才会自增，
+#: ``BIGINT PRIMARY KEY`` 不会 —— 插入时报
+#: ``NOT NULL constraint failed: <table>.id``，而那个报错看起来像是漏传了主键，
+#: 完全指不到「类型选错了」。
+#:
+#: 项目要在 SQLite（CLI）与 Postgres（server）两边跑同一份模型，
+#: 所以主键统一用这个类型，不要直接写 ``BigInteger``。
+BigIntPk = BigInteger().with_variant(Integer, "sqlite")
 
 
 # --------------------------------------------------------------------------- #

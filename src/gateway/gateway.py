@@ -308,6 +308,7 @@ class Gateway:
             remaining = len(chain) - index - 1
             outcome = await self._attempt_candidate(
                 spec=spec,
+                alias=alias,
                 invoke=invoke,
                 budget=budget,
                 attempts=attempts,
@@ -352,6 +353,7 @@ class Gateway:
         self,
         *,
         spec: ModelSpec,
+        alias: str,
         invoke: Callable[[ModelSpec], Awaitable[Any]],
         budget: CallBudget,
         attempts: list[AttemptRecord],
@@ -361,6 +363,11 @@ class Gateway:
         estimate: int,
     ) -> Any | None:
         """尝试一个候选（含重试）。成功返回结果，失败返回 ``None``。
+
+        ``alias`` 一路传到这里，只为一个用途：**失败记录的归属**。
+        失败也要记账，而记下来的账必须能按逻辑名聚合 —— 缺了它，
+        按 ``alias`` 做的聚合会**静默丢掉全部失败记录**，
+        而失败恰恰是账单最容易对不上的地方。
 
         **顺序是约束**（架构概要设计-gateway §2.1）：
 
@@ -446,7 +453,7 @@ class Gateway:
                             elapsed_s=self._clock.monotonic() - attempt_started,
                         )
                     )
-                    self._record_failure_usage(spec, trace_id, session_id, caller)
+                    self._record_failure_usage(spec, alias, trace_id, session_id, caller)
                     self._emit(
                         EventName.CALL_FAILED,
                         {"model": spec.key, "error": str(exc), "retryable": exc.retryable},
@@ -764,6 +771,7 @@ class Gateway:
     def _record_failure_usage(
         self,
         spec: ModelSpec,
+        alias: str,
         trace_id: str,
         session_id: str | None,
         caller: str | None,
@@ -773,11 +781,15 @@ class Gateway:
         **用量字段留 ``None`` 而不是 0**：我们不知道上游有没有计费、计了多少。
         但「某个模型被打过一次」这个事实本身是有价值的 ——
         账单对不上时，它是唯一的线索。补 0 会让这条线索消失。
+
+        **``alias`` 必须填**。这里曾经硬编码成空串，后果是
+        ``src/repo`` 侧按逻辑名的聚合会**静默丢掉全部失败记录** ——
+        而失败恰好是账单最容易对不上的地方，也正是最需要被单独看见的那部分。
         """
         self._ledger.record(
             UsageRecord(
                 trace_id=trace_id,
-                alias="",
+                alias=alias,
                 model_key=spec.key,
                 provider=spec.provider,
                 model=spec.model,
