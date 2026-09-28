@@ -132,7 +132,14 @@ def to_event_rows(
                 session_id=payload.get("session_id"),  # type: ignore[arg-type]
                 caller=payload.get("caller"),  # type: ignore[arg-type]
                 alias=str(payload.get("alias") or ""),
-                model_key=str(payload.get("model") or payload.get("model_key") or ""),
+                # ``model`` 在 gateway 的载荷里指的是**模型键**（``spec.key``），
+                # 不是厂商模型名 —— 后者在 ``spec.model`` 里，事件载荷不带它。
+                subject=str(
+                    payload.get("subject") or payload.get("model") or payload.get("tool_name") or ""
+                ),
+                # 谁发的谁填：工具事件在载荷里给 ``outcome``，模型事件不给（留空）。
+                # 这样 sink 不必知道自己在替哪个生产者做事 —— 它只做搬运。
+                outcome=str(payload.get("outcome") or ""),
                 attempt_index=int(payload.get("attempt_index") or 0),
                 payload=dict(payload),
                 occurred_at=occurred_at,

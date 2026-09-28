@@ -51,8 +51,25 @@ class EventRow(Base):
     trace_id: Mapped[str] = mapped_column(Text, default="", nullable=False)
     session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     caller: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 逻辑名。**只对模型事件有意义** —— 工具不经过逻辑名寻址
     alias: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    model_key: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    #: **这次动作作用于谁**：模型事件里是模型键（``runtime-deepseek``），
+    #: 工具事件里是工具名（``bash``）。
+    #:
+    #: 它曾经叫 ``model_key``，改名是因为平台有了**第二个事件生产者**
+    #: （``src/tool``，见 ``docs/tool`` 的 ``DT-10``）——「这次动作的对象」
+    #: 是同一个概念，并存两个列会逼后来的第三类生产者在两者之间二选一，
+    #: 而那个选择没有正确答案。
+    subject: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    #: **结果档位**：``executed`` / ``reused`` / ``uncertain`` / ``refused`` ……
+    #:
+    #: 为什么值得单列而不是塞进 ``payload``：**幂等有没有生效**完全由它回答，
+    #: 而那是 ``src/tool`` 最该被统计的一维；走 JSONB 查既慢又建不了索引。
+    #: 对模型事件它留空（模型侧的结果由 ``attempts`` / ``degraded`` 表达）。
+    outcome: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
     #: 本次是第几次尝试（含首发）。**事件按它排序才能还原一次调用的过程**
     attempt_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
@@ -72,6 +89,9 @@ class EventRow(Base):
         Index("ix_event_trace", "trace_id", "occurred_at"),
         Index("ix_event_session", "session_id", "occurred_at"),
         Index("ix_event_name_occurred", "name", "occurred_at"),
+        # 「这个会话里 bash 跑了多少次」「哪些工具被幂等短路了」——
+        # 这两类问题直接落在 (subject, outcome) 上
+        Index("ix_event_subject_outcome", "subject", "outcome"),
         Index("ix_event_occurred", "occurred_at"),
     )
 
@@ -121,7 +141,8 @@ class EventRepo(Repository):
                     "session_id": row.session_id,
                     "caller": row.caller,
                     "alias": row.alias,
-                    "model_key": row.model_key,
+                    "subject": row.subject,
+                    "outcome": row.outcome,
                     "attempt_index": row.attempt_index,
                     "payload": dict(row.payload or {}),
                     "occurred_at": row.occurred_at,

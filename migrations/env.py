@@ -38,6 +38,7 @@ from foundation.settings import load_config
 # 每新增一张表都要在这里加一行 —— 漏了的话 autogenerate 会认为那张表
 # **应该被删掉**，然后生成一个 DROP TABLE 的迁移。
 import repo.event  # noqa: F401
+import repo.tool  # noqa: F401
 import repo.usage  # noqa: F401
 
 config = context.config

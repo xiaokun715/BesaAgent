@@ -19,6 +19,10 @@ dependencies = [
     # CLI 的默认存储（内存 SQLite）。纯 Python，不需要任何外部服务 ——
     # 这是「无数据库即可跑通」这条项目级前提的一部分。
     "aiosqlite>=0.20",
+    # 工具参数的 schema 校验。我们**把 schema 告诉模型**，那么就必须按它校验回来的参数 ——
+    # 带着错参数执行会产生更难查的副作用（文件写歪了、命令跑了一半）。
+    # 纯 Python，无外部服务。
+    "jsonschema>=4.20",
 ]
 
 [project.optional-dependencies]

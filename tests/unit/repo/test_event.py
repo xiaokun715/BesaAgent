@@ -62,7 +62,8 @@ def _row(name: str = "gateway.call.started", **over) -> EventRow:
         "name": name,
         "trace_id": "t-1",
         "alias": "runtime.default",
-        "model_key": "m1",
+        # subject = 这次动作的对象：模型事件里是模型键，工具事件里是工具名
+        "subject": "m1",
         "payload": {"alias": "runtime.default"},
         "occurred_at": datetime.now(timezone.utc),
     }
@@ -175,6 +176,50 @@ async def test_by_session_and_time_window(db: Database):
             "s-1", window=TimeRange(start=now - timedelta(hours=1))
         )
     assert [r.event_id for r in rows] == ["s2"], "时间范围是半开区间"
+
+
+async def test_subject_and_outcome_are_queryable(db: Database):
+    """**`subject` + `outcome` 必须能被直接查**，而不是从 ``payload`` 里掏。
+
+    这两列是为``src/tool`` 加的（见架构文档 `DT-10`）：
+    「这个会话里 `bash` 跑了多少次」「哪些工具被幂等短路了」是高频排障问题，
+    走 JSONB 既慢又建不了索引。``outcome`` 尤其关键 ——
+    **幂等有没有生效**完全由它回答。
+    """
+    async with db.transaction() as tx:
+        await EventRepo(tx).append_many([
+            _row("tool.executed", event_id="t1", subject="bash", outcome="executed"),
+            _row("tool.reused", event_id="t2", subject="bash", outcome="reused"),
+            _row("tool.reused", event_id="t3", subject="write", outcome="reused"),
+            _row("gateway.call.succeeded", event_id="t4", subject="runtime-mock", outcome=""),
+        ])
+
+    async with db.transaction() as tx:
+        rows = await tx.execute(
+            text(
+                "SELECT subject, outcome FROM event WHERE subject = 'bash' "
+                "AND outcome = 'reused'"
+            )
+        )
+        hits = rows.all()
+        all_subjects = (
+            await tx.execute(text("SELECT DISTINCT subject FROM event ORDER BY subject"))
+        ).scalars().all()
+
+    assert len(hits) == 1, "按 (subject, outcome) 能精确查到「bash 被幂等短路了一次」"
+    assert all_subjects == ["bash", "runtime-mock", "write"], (
+        "模型事件与工具事件共用 subject 列，取值分别是模型键与工具名"
+    )
+
+
+async def test_outcome_is_empty_for_model_events(db: Database):
+    """模型事件的 ``outcome`` 留空 —— 它由**事件名**表达（`call.succeeded` / `call.failed`），
+    而不是由这一列。强行填一个值会让两套口径并存。"""
+    async with db.transaction() as tx:
+        await EventRepo(tx).append_many([_row(event_id="m1", outcome="")])
+    async with db.transaction() as tx:
+        value = await tx.scalar(text("SELECT outcome FROM event WHERE event_id = 'm1'"))
+    assert value == ""
 
 
 async def test_count_by_name(db: Database):
