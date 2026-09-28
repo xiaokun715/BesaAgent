@@ -20,10 +20,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from composition.usage_sink import try_flush_usage
+from composition.event_sink import BufferingEmitter, flush_events
+from composition.usage_sink import to_usage_rows, try_flush_usage
 from foundation.clock import Clock, SystemClock
 from foundation.database import Database
 from foundation.settings import Settings, load_config
@@ -35,6 +37,7 @@ from gateway.rate_limit import LocalRateLimiter, RateLimitPolicy, build_rate_lim
 from gateway.registry import Registry
 from gateway.retry import RetryPolicy
 from gateway.usage import UsageLedger
+from repo.usage import UsageRepo, UsageRow
 
 __all__ = ["Runtime", "build_runtime"]
 
@@ -56,28 +59,62 @@ class Runtime:
     #: ``src/`` 不能 import ``apps/``，所以组合根只声明它、不构造它。
     #: ``None`` 表示这个进程不落库（如默认配置下的 CLI）。
     database: Database | None = None
+    #: 事件缓冲器。``events`` 是注入的 ``EventEmitter`` 时它是 ``None``
+    #: （那种情况下事件的去向由注入方决定，不归组合根管）。
+    event_sink: BufferingEmitter | None = None
 
-    async def flush_usage(self) -> None:
-        """把 gateway 账本里的用量落库。
+    async def flush_pending(self) -> None:
+        """把待落库的**用量与事件在同一个事务里**交付。
 
-        **必须在 ``aclose()`` 之前调用**，而 ``aclose()`` 自己也会兜一次底 ——
-        见那里的说明。
+        **为什么必须同一个事务**（``foundation/database.py`` 的设计目标）：
+
+        > checkpoint 落库 + 事件落库 + 用量落库三步，若各是一个事务，
+        > 「执行到一半进程挂了」会留下互相矛盾的记录，
+        > 而断点续跑依赖的正是这三者的一致性。
+
+        「事件说降级了、用量里没有对应记录」这种矛盾，事后谁都说不清是哪边丢了。
+
+        **必须在 ``aclose()`` 之前调用**，而 ``aclose()`` 自己也会兜一次底。
         """
-        await try_flush_usage(self.database, self.gateway.ledger)
+        if self.database is None:
+            # 没有数据库（CLI 默认）：仍然要取走，避免缓冲区涨到上限后静默丢弃。
+            await try_flush_usage(None, self.gateway.ledger)
+            if self.event_sink is not None:
+                self.event_sink.drain()
+                self.event_sink.drain_dropped()
+            return
+
+        rows, dropped = self._take_usage()
+        async with self.database.transaction() as tx:
+            await UsageRepo(tx).record_ledger(rows, dropped=dropped)
+            if self.event_sink is not None:
+                await flush_events(tx, self.event_sink)
+
+    def _take_usage(self) -> tuple[list[UsageRow], int]:
+        """取走账本里的记录与丢弃数，转成行。
+
+        **与事务分开是为了让两次 drain 紧挨着、中间没有 await** ——
+        否则期间新产生的记录会被下一批交付，虽然不丢，但会让「这一批里有什么」
+        变得不确定。取完之后再进事务，语义就干净了。
+        """
+        records = self.gateway.ledger.drain()
+        dropped = self.gateway.ledger.drain_dropped()
+        rows = to_usage_rows(records, occurred_at=datetime.now(timezone.utc))
+        return rows, dropped
 
     async def aclose(self) -> None:
         """释放全部连接。**幂等**。
 
-        **顺序是有约束的**：先 flush 用量，再关连接。
+        **顺序是有约束的**：先 flush，再关连接。
 
         ``Gateway.aclose()`` 只关 provider 的 HTTP 客户端，**不 drain 它的
         ``UsageLedger``** —— 也就是说，不在这里补这一步的话，
-        缓冲区里的用量记录会跟着进程一起消失，而且**不会有任何错误**。
+        缓冲区里的用量与事件会跟着进程一起消失，而且**不会有任何错误**。
 
         而 flush 又必须排在关连接之前：要落库的数据得先进事务，
         连接关了就没地方写了。
         """
-        await self.flush_usage()
+        await self.flush_pending()
         await self.gateway.aclose()
 
     async def __aenter__(self) -> Runtime:
@@ -129,6 +166,11 @@ def build_runtime(
         provider_options=provider_options,
     )
 
+    # 没注入 events、又要落库时，用一个缓冲器把事件攒起来，由 flush_pending 交付。
+    # **不落库时保持 NullEmitter**：攒起来也没地方去，只会白占内存 ——
+    # 而「攒着不写」比「当场丢掉」更糟，因为它把丢失推迟到了缓冲区溢出那一刻。
+    event_sink = BufferingEmitter() if (events is None and database is not None) else None
+
     gateway = Gateway(
         registry,
         retry=RetryPolicy.from_config(gateway_cfg.get("retry")),
@@ -139,19 +181,25 @@ def build_runtime(
         rate_limit=_build_limiter(gateway_cfg.get("rate_limit"), resolved_clock),
         ledger=ledger or UsageLedger(),
         cost=CostSheet.from_config(gateway_cfg.get("cost")),
-        events=events or NullEmitter(),
+        events=events or event_sink or NullEmitter(),
         clock=resolved_clock,
         deadline_s=_deadline(gateway_cfg),
     )
 
     _log.info(
-        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，用量落库=%s",
+        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，落库=%s",
         cfg.env,
         len(registry.models),
         ", ".join(sorted(registry.aliases)) or "（无）",
-        "开" if database is not None else "关（记录只留在内存）",
+        "开（用量 + 事件）" if database is not None else "关（只留在内存）",
     )
-    return Runtime(settings=cfg, registry=registry, gateway=gateway, database=database)
+    return Runtime(
+        settings=cfg,
+        registry=registry,
+        gateway=gateway,
+        database=database,
+        event_sink=event_sink,
+    )
 
 
 def _build_limiter(cfg: Mapping[str, Any] | None, clock: Clock) -> LocalRateLimiter:

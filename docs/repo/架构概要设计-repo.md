@@ -547,6 +547,17 @@ flowchart LR
 | **RR-12** | **CLI 默认不注入 `database`**（有意，不是漏接） | 设计稿说 CLI 用「内存实现」 | CLI 默认 `Runtime.database is None`，用量只留内存 | 内存 SQLite **没有表**（CLI 不走迁移），贸然注入会让每次 `flush_usage()` 都以「表不存在」失败并刷告警 —— 一个每次都报错、但功能其实正常的告警比没有告警更糟。需要持久化时显式注入 |
 | **RR-13** | **无数据库时仍要 drain，并告警一次** | 设计稿未涉及 | `try_flush_usage(None, ledger)` 取走记录 + 每进程告警一次 | 不 drain 的话账本会涨到 `max_records` 然后**静默丢弃** —— 正是本项目最不能接受的失败。告警一次是「看得到但不吵」的取舍点 |
 
+### 第三批：事件落库时发现的（步骤 3）
+
+| # | 修订 | 原稿 | 现在 | 理由 |
+|---|---|---|---|---|
+| **RR-14** | **事件的 `trace_id` 从 `foundation.logging` 的 contextvar 取** | 设计稿说「事件必须携带可关联标识」，未说从哪来 | 用现成的 `current_trace_id()` | gateway 的 7 个 emit 点里**只有 3 个**在载荷里带 `trace_id`。但 `foundation/logging.py` 早就用 contextvar 承载了它（日志格式串要用）—— 于是**不需要改 gateway** 就能拿到。这也是它必须是 contextvar 而非全局变量的原因：多 agent 并发时，全局变量会让 A 的事件挂上 B 的 trace_id |
+| **RR-15** | **用量与事件的 `trace_id` 来源不同，必须在源头归一化** | 未涉及 | `to_usage_rows` 里：显式参数优先，缺了取上下文 | 实测踩到：用量的 `trace_id` 来自 `chat(trace_id=...)` 的**显式参数**，事件的来自 **contextvar**。调用方不传显式参数时，前者是空串而后者有值 —— 两张表虽然同属一次调用却**关联不起来**，而它们恰恰是靠 trace_id 串成一条线的 |
+| **RR-16** | **批量 upsert 必须用 `RETURNING` 而不是 `rowcount`** | 未涉及 | `.returning(EventRow.event_id)` + 数返回行数 | 批量执行（executemany）返回的是 `IteratorResult`，**它没有 `rowcount`** —— 拿不到「实际插了几行」，也就分不清「写成功」与「因重复被忽略」。而这两件事必须能区分：前者正常，后者说明同一批被交付了两次。实测两个后端都支持 executemany + RETURNING |
+| **RR-17** | **`Transaction` 需要 `dialect_name`** | 未涉及 | 作为一等属性暴露 | 少数语句要按方言选构造器（`on_conflict_do_nothing` 在两个后端各有自己的 `insert`）。暴露出来好过让每个仓储去 `session` 内部掏方言名 —— 那既依赖实现细节，也会让「这里有后端差异」散落各处而没人知道 |
+| **RR-18** | **`session_id` / `caller` 在事件里暂时为空**（已知缺口） | `FR-G-10` 要求事件携带会话与调用方 | 两列**可空**，暂不填；有一条测试记录这个状态 | gateway 的 7 个 emit 点**全都不带**这两个字段（本次架构分析已记录）。补它需要改 gateway（每个 emit 点都带，或引入一次调用上下文的绑定），属于跨模块改动，**没有和本次一起做**。**不要把「表建好了」当成「这一维可用」** —— 有一条用例专门钉住它，那天补上时会红 |
+| **RR-19** | **`Runtime.flush_pending()` 必须有端到端测试** | 设计稿的测试策略没点到这一层 | 新增 `tests/integration/composition/test_delivery.py` | **这是实现期真实踩到的**：`flush_pending` 里把 `record_ledger(*self._take_usage())` 写成了位置参数展开，而 `dropped` 是关键字参数 —— **207 个测试全绿**，直到真跑一次端到端才炸。教训：单测覆盖了每一环，却没覆盖「它们接起来」那一环，而那个接缝恰恰是最容易出错的地方 |
+
 ### 一个让整个向量设计成立的事实
 
 实测确认：**PostgreSQL 的 DDL 是事务性的** —— 在一个事务里 `CREATE TABLE` 然后回滚，表**不会存在**。

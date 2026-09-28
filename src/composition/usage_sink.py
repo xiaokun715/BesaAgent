@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from foundation.database import Database
+from foundation.logging import current_trace_id
 from gateway.usage import UsageLedger, UsageRecord
 from repo.types import BatchResult
 from repo.usage import UsageRepo, UsageRow
@@ -28,6 +29,16 @@ from repo.usage import UsageRepo, UsageRow
 __all__ = ["flush_usage", "to_usage_rows", "try_flush_usage"]
 
 _log = logging.getLogger(__name__)
+
+
+def _context_trace_id() -> str:
+    """当前协程上下文的 trace_id；未设置时返回空串。
+
+    ``foundation.logging`` 的占位符是 ``"-"``（那是「还没设置」的**显示值**），
+    直接入库会让「按 trace_id 查」多出一个叫 ``-`` 的垃圾桶。
+    """
+    value = current_trace_id()
+    return "" if value == "-" else value
 
 #: 「本进程没有数据库」这件事只告警一次。
 #:
@@ -50,9 +61,16 @@ def to_usage_rows(
     交付节奏下是可接受的：真正需要精确时间时，应在 gateway 侧就带上绝对时刻，
     而那属于契约变更，一期不做。
     """
+    # **trace_id 的归一化**：``UsageRecord.trace_id`` 来自 ``chat()`` 的**显式参数**，
+    # 而事件那边的 trace_id 来自 ``foundation.logging`` 的 contextvar。
+    # 调用方不传 ``trace_id=`` 时前者是空串、后者有值 ——
+    # 于是用量与事件虽然同属一次调用，却**关联不起来**，而两张表恰恰是靠它串成一条线的。
+    # 所以在源头补一次：显式参数优先，缺了就取上下文。
+    fallback_trace = _context_trace_id()
+
     return [
         UsageRow(
-            trace_id=record.trace_id,
+            trace_id=record.trace_id or fallback_trace,
             # alias 可能为空（老版本 gateway 的失败记录就是空串）。
             # **不在这里拦**：拦住会让数据丢失，而告警由 UsageRepo 负责。
             alias=record.alias,

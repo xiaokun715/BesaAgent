@@ -69,10 +69,23 @@ class Transaction:
     不是靠约定「你不要 commit」，而是**没有那个方法**。
     """
 
-    __slots__ = ("_session",)
+    __slots__ = ("_session", "_dialect_name")
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, dialect_name: str) -> None:
         self._session = session
+        self._dialect_name = dialect_name
+
+    @property
+    def dialect_name(self) -> str:
+        """当前连接的方言名（``postgresql`` / ``sqlite``）。
+
+        **存在的理由**：少数语句必须按方言选构造器 —— 最典型的是 upsert
+        （``on_conflict_do_nothing`` 在两个后端各有自己的 ``insert``）。
+        把它作为一等属性暴露，好过让每个仓储自己去
+        ``session`` 内部掏方言名：那既依赖实现细节，也会让「这里有后端差异」
+        这件事散落在各处而没人知道。
+        """
+        return self._dialect_name
 
     # ---------------------------------------------------------------- 读写
     async def execute(self, statement: Any, params: Mapping[str, Any] | None = None) -> Result[Any]:
@@ -148,11 +161,13 @@ class Database:
     （每个仓储各建一个池会打爆文件描述符上限 —— ``foundation/container.py`` 记过这个教训）。
     """
 
-    __slots__ = ("_engine", "_session_factory")
+    __slots__ = ("_engine", "_session_factory", "_dialect_name")
 
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
         self._session_factory = create_session_factory(engine)
+        # 方言名在构造时读一次（引擎不会换方言），避免每次事务都去问引擎
+        self._dialect_name = engine.dialect.name
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[Transaction]:
@@ -182,7 +197,7 @@ class Database:
                 # session.begin() 让「进块即 BEGIN、出块即 COMMIT/ROLLBACK」
                 # 成为不可绕过的事实 —— 业务代码拿不到 session，也就无从 commit。
                 async with session.begin():
-                    yield Transaction(session)
+                    yield Transaction(session, self._dialect_name)
         finally:
             _IN_TRANSACTION.reset(token)
 
