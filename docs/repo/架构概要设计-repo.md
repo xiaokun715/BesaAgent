@@ -464,7 +464,7 @@ flowchart LR
 
 | # | 决策 | 被否决的方案 | 理由 |
 |---|---|---|---|
-| **R-A** | `Transaction` 是 Protocol 而非 `AsyncSession` | 直接收 `AsyncSession` | 内存实现能满协议 → `NFR-R-04` 可测；换 SQLAlchemy 版本只影响实现层 |
+| **R-A** | ~~`Transaction` 是 Protocol 而非 `AsyncSession`~~ → **见 §12 的实现期修订**：抽象点放在**引擎/方言**，`Database` / `Transaction` 是具类 | 收 `AsyncSession` / 收 Protocol | 原意是「让内存实现能满足同一协议」。编码时发现走不通（§12），改成的做法收益更大：**同一份仓储代码跑在 SQLite 与 Postgres 上** |
 | **R-B** | 事务用显式 `async with` | 装饰器 / 隐式按请求 | 装饰器藏边界；隐式在 agent 场景语义错误（一次调用几分钟，长事务持锁） |
 | **R-C** | 仓储**构造时**注入事务 | 方法参数传入 | 仓储实例与事务同生命周期，「这次在哪个事务」不需要每个方法读一遍 |
 | **R-D** | 业务表由业务模块自持 | 全部塞进 repo | repo 是 provider/gateway 的下游，承载业务表会导致反向依赖 |
@@ -518,3 +518,18 @@ flowchart LR
 | 误连到 `besa` 库 | 两个项目的 `alembic_version` 互相覆盖，可能改坏另一个项目的数据 | 库名不同 + `CR-12` 类的测试守着；迁移前打印目标库名并要求确认 |
 | `dropped` 又一次没有出口 | 重演 gateway 的缺口 | `usage_drops` 表 + WARNING + `CR-3` 测试 |
 | Redis 与 Postgres 的数据职责划不清 | 有人把权威数据放 Redis，重启就丢 | 判据写死：**能丢的才进 Redis**；repo 不认 Redis（§1.1 硬边界 3） |
+
+---
+
+## 12. 实现期回填的修订
+
+与 `docs/gateway/架构概要设计-gateway.md` §9.5 同一性质：**编码阶段推翻或修正了设计稿的地方**。
+回填是为了让文档与代码不分叉 —— 一份过时但没人知道的架构文档，比没有架构文档更糟。
+
+| # | 修订 | 原稿 | 现在 | 理由 |
+|---|---|---|---|---|
+| **RR-1** | **抽象点从「事务类」移到「引擎/方言」** | `Database` / `Transaction` 是 `Protocol`，CLI 提供一个「内存实现」满足同一协议 | 两者都是具类（住 `foundation/database.py`）；CLI 用的是**内存 SQLite 引擎** | **原方案走不通**：`Transaction.execute()` 收的是 SQLAlchemy 语句，一个内存对象**无法**执行它 —— 于是那个「内存实现」只能是个什么都不做的空壳，而空壳会**静默丢弃写入**，正是本项目最不能接受的失败。改成引擎抽象之后收益更大：**仓储代码只写一次**，SQLite 与 Postgres 共用 |
+| **RR-2** | **禁止嵌套事务，且必须报错** | 设计稿未涉及 | `Database.transaction()` 用 `ContextVar` 检测嵌套并抛 `RuntimeError` | 嵌套调用会各建一个会话 = **两个独立事务**（外层提交、内层回滚），而**两边都不报错**。这正是本模块存在的理由所要消灭的事故形态，所以必须把它变成一条明确的错误。用 `ContextVar` 而非实例属性，是因为数据库对象与并发协程是一对多的 |
+| **RR-3** | **`Transaction` 的读写方法收绑定参数** | 设计稿只写了「收语句」 | `execute` / `fetch_all` / `fetch_one` / `scalar` 都收 `params` | 写第一个真实仓储时发现的：仓储必然要传绑定参数。缺了它只能拼字符串 —— 那既引入注入面，也让数据库无法复用执行计划 |
+| **RR-4** | **连接失败必须补上目标信息** | 设计稿只说「明确报错」 | 健康检查捕获连接异常并重抛，带上 `库名 @ 主机:端口` 与三条常见原因 | 实测：库不存在 / 角色不存在 / 密码错三种情况，asyncpg 报的都是同一句 `ConnectionDoesNotExistError: connection was closed in the middle of operation`（PostgreSQL 故意不区分角色是否存在）。不补目标信息，排障第一步就卡住 |
+| **RR-5** | **`SQLAlchemy` 移出 `postgres` 可选依赖** | `postgres` 组里有 `SQLAlchemy` | 进主依赖；`postgres` 组只留 `asyncpg` / `alembic` | SQLAlchemy 是**与方言无关**的抽象层，CLI 的 SQLite 路径也要用它。留在可选组会让「CLI 的默认存储」变成可选能力，与「无数据库即可跑通」这条项目级前提冲突 |

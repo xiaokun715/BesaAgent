@@ -13,11 +13,17 @@ dependencies = [
     "PyYAML>=6.0",
     "pydantic>=2.7,<3",
     "httpx>=0.27",
+    # 持久化层的抽象：**与方言无关**，CLI 的 SQLite 路径与 server 的 Postgres 路径共用它。
+    # 因此它不能在 postgres 可选组里 —— 那会让「CLI 默认存储」变成一个可选依赖。
+    "SQLAlchemy>=2.0.30,<2.1",
+    # CLI 的默认存储（内存 SQLite）。纯 Python，不需要任何外部服务 ——
+    # 这是「无数据库即可跑通」这条项目级前提的一部分。
+    "aiosqlite>=0.20",
 ]
 
 [project.optional-dependencies]
 # 运行时按需安装：仅对应能力被激活时才必需
-postgres = ["SQLAlchemy>=2.0.30,<2.1", "asyncpg>=0.29", "alembic>=1.13"]
+postgres = ["asyncpg>=0.29", "alembic>=1.13"]
 redis = ["redis>=5.0"]
 server = ["fastapi>=0.111", "uvicorn[standard]>=0.30"]
 mcp = ["fastmcp>=2.2"]
