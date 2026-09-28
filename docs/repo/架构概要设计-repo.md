@@ -533,3 +533,16 @@ flowchart LR
 | **RR-3** | **`Transaction` 的读写方法收绑定参数** | 设计稿只写了「收语句」 | `execute` / `fetch_all` / `fetch_one` / `scalar` 都收 `params` | 写第一个真实仓储时发现的：仓储必然要传绑定参数。缺了它只能拼字符串 —— 那既引入注入面，也让数据库无法复用执行计划 |
 | **RR-4** | **连接失败必须补上目标信息** | 设计稿只说「明确报错」 | 健康检查捕获连接异常并重抛，带上 `库名 @ 主机:端口` 与三条常见原因 | 实测：库不存在 / 角色不存在 / 密码错三种情况，asyncpg 报的都是同一句 `ConnectionDoesNotExistError: connection was closed in the middle of operation`（PostgreSQL 故意不区分角色是否存在）。不补目标信息，排障第一步就卡住 |
 | **RR-5** | **`SQLAlchemy` 移出 `postgres` 可选依赖** | `postgres` 组里有 `SQLAlchemy` | 进主依赖；`postgres` 组只留 `asyncpg` / `alembic` | SQLAlchemy 是**与方言无关**的抽象层，CLI 的 SQLite 路径也要用它。留在可选组会让「CLI 的默认存储」变成可选能力，与「无数据库即可跑通」这条项目级前提冲突 |
+| **RR-6** | **`CREATE EXTENSION vector` 需要超级用户；首次部署是一次性前置** | 设计稿只说「迁移里建，幂等」 | 迁移里**保留** `CREATE EXTENSION IF NOT EXISTS vector`；但部署文档必须写明：**首次部署要先由超级用户建一次** | 实测：`vector.control` 里**没有 `trusted = true`**，所以 `besa` 角色直接建会报「只有超级用户能创建扩展」。而扩展**已存在**时，`besa` 跑 `CREATE EXTENSION IF NOT EXISTS` **能通过** —— `IF NOT EXISTS` 在权限检查之前短路。所以迁移的写法不用改，但**漏掉这一步会让首次部署失败**，且报错信息指向「权限」而不是「你少做了一步」 |
+
+### 一个让整个向量设计成立的事实
+
+实测确认：**PostgreSQL 的 DDL 是事务性的** —— 在一个事务里 `CREATE TABLE` 然后回滚，表**不会存在**。
+
+这条不是冷知识，它是本设计的前提之一：`DR-4`（向量按维度分表）与 `FR-R-08`
+（「向量与业务行同事务」）能成立，正是因为建表与写入可以在同一个事务里一起提交或一起回滚。
+反之，`besa-iv-kb` 的 `VectorWriteStep` 事故（「删旧 + upsert 拆成两个事务 → 崩在中间向量全丢」）
+也只有在 DDL/DML 同事务的数据库上，才**有可能**被修好。
+
+> 这也解释了为什么迁移必须由 `foundation/db.py` 的**同一份 `Base`** 驱动：
+> 迁移看到的表与运行时看到的表若不一致，跨表事务会在一个「以为自己知道表结构」的假设上运行。

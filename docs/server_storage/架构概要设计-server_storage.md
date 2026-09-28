@@ -446,6 +446,7 @@ sequenceDiagram
 | **RS-1** | **连接失败的错误必须带上目标** | 只要求「明确报错」 | `healthcheck` 捕获连接异常并重抛，错误里带 `库名 @ 主机:端口` 与三条常见原因 | 实测：**库不存在 / 角色不存在 / 密码错**三种情况，asyncpg 报的都是同一句 `ConnectionDoesNotExistError: connection was closed in the middle of operation` —— 它没说连的是哪台、哪个库。（PostgreSQL 故意不区分角色是否存在，防枚举；但客户端至少要能补上目标。）不补的话排障第一步就卡住 |
 | **RS-2** | **`open_database` 在健康检查失败时必须先 `dispose()` 再上抛** | 未涉及 | `try/except` 里先 `await engine.dispose()` | 不这么做，一个启动失败的进程会**一直占着几个连接**，而运维看到的是「明明没起来却连着一堆连接」—— 症状离原因很远 |
 | **RS-3** | **DSN 必须带异步驱动，且在构造期校验** | 未涉及 | `foundation.db.create_engine` 有驱动白名单，并给出「该补什么」的提示 | 同步驱动写进来会在第一次 `await` 时才炸，那时的报错离配置处很远 |
+| **RS-4** | **`require_vector` 必须可关，但默认开** | 设计稿默认要求 vector 扩展 | 保留默认开；CLI 的 SQLite 路径与「只做关系存储」的部署可显式关 | 关掉时**只记 WARNING 不抛错**（`健康检查` 返回的 `warnings` 里有），因为「不需要向量」与「需要但没装」是两件事 —— 后者若静默，症状会是「检索总返回空」。另：**建扩展需要超级用户**（实测 `vector.control` 无 `trusted`），首次部署是一次性前置，见 `docs/repo/架构概要设计-repo.md` `RR-6` |
 
 **已验证的部分**（真实后端，非 mock）：
 
