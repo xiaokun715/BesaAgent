@@ -94,7 +94,11 @@ models:
   runtime-deepseek:
     provider: openai        # 适配器：DeepSeek 是 OpenAI 兼容形状
     vendor: deepseek        # 端点与凭据：取自 providers.deepseek
-    model: deepseek-chat
+    # 实测可用的名字：deepseek-v4-flash / deepseek-flash / deepseek-chat / deepseek-v4-pro
+    # ⚠ **不要写 deepseek-v4-flash[1m]** —— 那个 `[1m]` 是 Claude Code 客户端的
+    # 约定（1M 上下文），不是 API 的模型名，发过去会得到 400：
+    #   "The supported API model names are deepseek-flash, deepseek-v4-pro"
+    model: deepseek-v4-flash
     temperature: 0.0
     max_tokens: 8192
     timeout_s: 120

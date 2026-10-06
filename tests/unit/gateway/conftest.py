@@ -57,11 +57,19 @@ class HostRouter:
 
     「上游被打了几次」是网关多数验收点的核心断言（B-6 / B-7 / B-9 / B-10），
     所以调用记录必须精确到次，且能按 host 分组。
+
+    **同时记录请求体**（:attr:`bodies`）—— 没有它就断言不了「参数有没有真的透传到上游」。
+    补这一项之前，把 ``chat()`` 里的 ``temperature=temperature`` 改成写死的
+    ``0.0``，**400 多条测试全绿**：因为夹具只看 host，压根看不到发出去的内容。
+    这类「网关只是把你给的东西转手递下去」的路径，只有看请求体才测得出来。
     """
 
     def __init__(self) -> None:
         self._routes: dict[str, Callable[[httpx.Request], httpx.Response]] = {}
         self.calls: list[str] = []
+        #: 每次调用收到的请求体（已解析成 dict）。**与 :attr:`calls` 同序**。
+        #: 非 JSON 的请求体会记成 ``{}`` —— 那说明这条断言本身写错了地方。
+        self.bodies: list[dict[str, Any]] = []
 
     def on(self, host: str, responder: httpx.Response | Callable[[httpx.Request], httpx.Response]) -> HostRouter:
         self._routes[host] = responder if callable(responder) else (lambda _req: responder)
@@ -70,9 +78,25 @@ class HostRouter:
     def count(self, host: str) -> int:
         return self.calls.count(host)
 
+    def body(self, index: int = -1) -> dict[str, Any]:
+        """取第 ``index`` 次调用的请求体（默认最后一次）。"""
+        return self.bodies[index]
+
+    def body_to(self, host: str) -> dict[str, Any]:
+        """取**发往该 host** 的最后一次请求体。
+
+        比按下标取稳：重试或降级会让调用次数变化，而下标随之漂移 ——
+        断言会跟着变成「测的是第几次」而不是「测的是发了什么」。
+        """
+        for seen, body in zip(reversed(self.calls), reversed(self.bodies)):
+            if seen == host:
+                return body
+        raise AssertionError(f"没有发往 {host!r} 的调用；实际发往：{self.calls}")
+
     def __call__(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
         self.calls.append(host)
+        self.bodies.append(_decode_body(request))
         responder = self._routes.get(host)
         if responder is None:
             raise AssertionError(f"未配置的假端点：{host}")
@@ -81,6 +105,14 @@ class HostRouter:
     @property
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self)
+
+
+def _decode_body(request: httpx.Request) -> dict[str, Any]:
+    try:
+        data = json.loads(request.content)
+    except Exception:  # noqa: BLE001 - 夹具不因解析失败而中断，让断言去暴露
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 @pytest.fixture
@@ -131,6 +163,62 @@ class RecordingEmitter(NullEmitter):
 
     def payloads(self, name: str) -> list[dict[str, Any]]:
         return [payload for event, payload in self.events if event == name]
+
+
+def embed_body(count: int = 1, dim: int = 8, model: str = "m") -> dict[str, Any]:
+    """一个形状正确的 embedding 响应。
+
+    ``index`` **必须齐且是 0..n-1** —— provider 在批量 ≥9 条时对上游的分片重置
+    有专门的防御（见 ``openai/embedding.py``），这里给一个规规矩矩的。
+    """
+    return {
+        "model": model,
+        "data": [
+            {"index": i, "embedding": [float(i) / 10] * dim} for i in range(count)
+        ],
+        "usage": {"prompt_tokens": 7 * count},
+    }
+
+
+class StreamingTransport(httpx.AsyncBaseTransport):
+    """**正常结束**的 SSE 流：吐出若干分片后自然收尾。
+
+    与 :class:`BrokenStreamTransport` 形成对照 —— 那个测的是「断开了怎么办」，
+    这个测的是「没断开时应该拿到什么」。只有后者覆盖了流式的**基线路径**。
+    """
+
+    def __init__(self, pieces: int = 3, *, usage: bool = True) -> None:
+        self.pieces = pieces
+        self.usage = usage
+        self.calls: list[str] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.url.host)
+        pieces = self.pieces
+        usage = self.usage
+
+        async def body():
+            for index in range(pieces):
+                payload = json.dumps(
+                    {"model": "m", "choices": [{"delta": {"content": f"片{index}"}}]},
+                    ensure_ascii=False,
+                )
+                yield f"data: {payload}\n\n".encode("utf-8")
+            if usage:
+                # OpenAI 兼容协议里用量是**最后一个 chunk**，且 choices 为空。
+                # 注意 gateway 的流式路径拿不到它（契约是 AsyncIterator[str]），
+                # 这里给出来是为了让上游形状真实 —— 别据此以为流式有成本。
+                final = json.dumps(
+                    {"model": "m", "choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 9}}
+                )
+                yield f"data: {final}\n\n".encode("utf-8")
+            yield b"data: [DONE]\n\n"
+
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_AsyncByteStream(body()),
+        )
 
 
 class BlockingTransport(httpx.AsyncBaseTransport):
@@ -193,7 +281,9 @@ __all__ = [
     "HostRouter",
     "OPENAI_ENV",
     "RecordingEmitter",
+    "StreamingTransport",
     "chat_body",
+    "embed_body",
     "limiter",
     "model_spec",
 ]
