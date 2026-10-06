@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import shlex
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
-from tool.base import Tool, ToolContext, require_text, truncate
+from tool.base import Tool, ToolContext, require_text
+from tool.sandbox import Sandbox
 from tool.types import ToolResult
 
 __all__ = ["DENYLIST", "BashTool"]
@@ -55,6 +55,11 @@ class BashTool(Tool):
     }
     side_effect: ClassVar[str] = "destructive"
 
+    def __init__(self, sandbox: Sandbox | None = None) -> None:
+        # **沙箱由外部注入**：资源边界与清理过的环境是**跨工具**的关注点，
+        # 让每个工具自己 new 一个的结果是「有一个用了默认值而没人发现」。
+        self._sandbox = sandbox or Sandbox()
+
     async def run(self, args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         command = require_text(args, "command", tool=self.name)
 
@@ -81,54 +86,44 @@ class BashTool(Tool):
                 )
             cwd = candidate
 
-        timeout = float(args.get("timeout_s") or ctx.timeout_s)
+        # 子进程的**全部边界**交给沙箱：超时真 kill、输出上限、
+        # 以及**不继承宿主环境**（继承的话 `bash env` 能把宿主的密钥全打出来）。
+        outcome = await self._sandbox.run_process(
+            command,
+            ctx=ctx,
+            cwd=cwd,
+            timeout_s=float(args.get("timeout_s") or ctx.timeout_s),
+        )
 
-        try:
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(cwd) if cwd else None,
-            )
-        except OSError as exc:
-            return ToolResult(
-                outcome="failed", tool_name=self.name, error=f"无法启动命令：{exc}"
-            )
-
-        try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            # **超时必须真的杀掉进程**。只放弃等待的话，子进程会继续跑 ——
-            # 而它的副作用还在发生，调用方却以为「这次超时了、什么都没做」。
-            process.kill()
-            await process.wait()
+        if outcome.timed_out:
             return ToolResult(
                 outcome="failed",
                 tool_name=self.name,
-                error=f"命令超时（{timeout}s），已终止。**注意：超时前它可能已经产生了副作用。**",
+                error=(
+                    f"命令超时（{ctx.timeout_s}s），已终止。"
+                    "**注意：超时前它可能已经产生了副作用。**"
+                ),
+                elapsed_s=outcome.duration_s,
             )
 
-        raw = stdout.decode("utf-8", errors="replace")
-        output, truncated = truncate(
-            raw, max_bytes=ctx.max_output_bytes, max_lines=ctx.max_output_lines
-        )
-        if truncated:
-            output += f"\n…（输出被截断，上限 {ctx.max_output_bytes} 字节 / {ctx.max_output_lines} 行）"
-
-        code = process.returncode or 0
-        if code != 0:
+        if outcome.returncode != 0:
             # 非零退出是**执行失败**而不是拒绝：命令跑了，只是它失败了。
             # 这一区分很重要 —— 上层据此判断「要不要重试」。
             return ToolResult(
                 outcome="failed",
                 tool_name=self.name,
-                output=output,
-                error=f"命令以退出码 {code} 结束",
-                truncated=truncated,
+                output=outcome.output,
+                error=f"命令以退出码 {outcome.returncode} 结束",
+                truncated=outcome.truncated,
+                elapsed_s=outcome.duration_s,
             )
 
         return ToolResult(
-            outcome="executed", tool_name=self.name, output=output, truncated=truncated
+            outcome="executed",
+            tool_name=self.name,
+            output=outcome.output,
+            truncated=outcome.truncated,
+            elapsed_s=outcome.duration_s,
         )
 
 

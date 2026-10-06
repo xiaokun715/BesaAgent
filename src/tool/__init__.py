@@ -24,20 +24,30 @@
 from __future__ import annotations
 
 from tool.base import Tool, ToolContext, truncate
-from tool.executor import EventSink, ToolEvent, ToolExecutor
+from tool.catalog import Catalog, CatalogIssue, Embedder
+from tool.executor import CallStack, EventSink, ToolEvent, ToolExecutor
 from tool.idempotency import (
     Claim,
     ClaimState,
     IdempotencyGuard,
     IdempotencyStore,
+    StoreUnavailable,
     UnavailableStore,
     args_digest,
     derive_key,
 )
+from tool.injection import InjectionPolicy, Inspector
 from tool.permission import PermissionDecision, PermissionPolicy
+from tool.recovery import Recovery, RetryBreaker, classify
 from tool.registry import ToolRegistry, UnknownToolError, build_default_registry
+from tool.result import ResultPolicy, ResultProcessor
+from tool.sandbox import ProcessOutcome, Sandbox, SandboxLimits
 from tool.types import (
+    ErrorKind,
+    InjectionKind,
+    InjectionVerdict,
     Outcome,
+    RecoveryAction,
     SideEffect,
     ToolDefinition,
     ToolInvocation,
@@ -45,15 +55,33 @@ from tool.types import (
 )
 
 __all__ = [
+    "CallStack",
+    "Catalog",
+    "CatalogIssue",
     "Claim",
     "ClaimState",
+    "Embedder",
+    "ErrorKind",
     "EventSink",
     "IdempotencyGuard",
     "IdempotencyStore",
+    "InjectionKind",
+    "InjectionPolicy",
+    "InjectionVerdict",
+    "Inspector",
     "Outcome",
     "PermissionDecision",
     "PermissionPolicy",
+    "ProcessOutcome",
+    "Recovery",
+    "RecoveryAction",
+    "ResultPolicy",
+    "ResultProcessor",
+    "RetryBreaker",
+    "Sandbox",
+    "SandboxLimits",
     "SideEffect",
+    "StoreUnavailable",
     "Tool",
     "ToolContext",
     "ToolDefinition",
@@ -66,6 +94,7 @@ __all__ = [
     "UnknownToolError",
     "args_digest",
     "build_default_registry",
+    "classify",
     "derive_key",
     "truncate",
 ]

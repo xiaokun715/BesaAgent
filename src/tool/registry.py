@@ -124,11 +124,19 @@ class ToolRegistry:
         return tuple(chosen)
 
 
-def build_default_registry(*, enabled: Collection[str] | None = None) -> ToolRegistry:
+def build_default_registry(
+    *,
+    enabled: Collection[str] | None = None,
+    sandbox: Any | None = None,
+) -> ToolRegistry:
     """按配置装配内置工具。
 
     ``enabled`` 来自 ``tool.enabled``（见需求说明书 §7）。**默认不含 ``bash``** ——
     它能做任何事，默认打开等于默认给 agent 一台无锁的机器（``DT-6``）。
+
+    ``sandbox`` 转交给需要它的工具（目前只有 ``bash``）。**由外部注入**：
+    资源边界与干净环境是**跨工具**的关注点，让每个工具自己 new 一个，
+    结果就是「有一个用了默认值而没人发现」。
     """
     # 延迟 import：让「只想拿契约做类型检查」的人不必拖上这些实现
     from tool.bash import BashTool
@@ -140,7 +148,7 @@ def build_default_registry(*, enabled: Collection[str] | None = None) -> ToolReg
         ReadTool.name: ReadTool(),
         GrepTool.name: GrepTool(),
         WriteTool.name: WriteTool(),
-        BashTool.name: BashTool(),
+        BashTool.name: BashTool(sandbox),
     }
 
     if enabled is None:

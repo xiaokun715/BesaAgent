@@ -98,16 +98,32 @@ class Tool(ABC):
     #: 声明错了会在两处同时出错，所以新增工具时这是最该想清楚的一个。
     side_effect: ClassVar[SideEffect] = "read"
 
-    @classmethod
-    def definition(cls) -> ToolDefinition:
-        """给模型看的定义。由类属性投影而来，保证不会与实现不一致。"""
-        if not cls.name:
-            raise ValueError(f"{cls.__name__} 没有声明 name")
+    #: **类别**（`FR-T-13`）。用于「一轮只暴露这一类」的静态收窄。
+    #:
+    #: 默认是 ``infra``（读文件、跑命令这类通用工具）。业务侧的工具应当声明成
+    #: 它所属的测试阶段（``requirement`` / ``test_design`` / ``test_case`` …）——
+    #: 那七个阶段天然正交，是**零成本**的收窄：agent 在某个阶段只该看见它那类工具。
+    category: ClassVar[str] = "infra"
+
+    def definition(self) -> ToolDefinition:
+        """给模型看的定义。由属性投影而来，**保证不会与实现不一致**。
+
+        **刻意是实例方法而不是类方法**：类方法只能读到类属性，
+        于是「同一类工具的两个实例带不同配置」就做不到了 ——
+        而那是个真实需求（两个作用域不同的 ``read``、两个指向不同服务的 HTTP 工具）。
+        注册进注册表的是**实例**，定义自然该跟着实例走。
+
+        子类**不要覆写它** —— 覆写之后定义与实现就有机会不一致，
+        而那份不一致是静默的（模型看到的与执行的不是一回事）。
+        """
+        if not self.name:
+            raise ValueError(f"{type(self).__name__} 没有声明 name")
         return ToolDefinition(
-            name=cls.name,
-            description=cls.description,
-            parameters=dict(cls.parameters),
-            side_effect=cls.side_effect,
+            name=self.name,
+            description=self.description,
+            parameters=dict(self.parameters),
+            side_effect=self.side_effect,
+            category=self.category,
         )
 
     @abstractmethod
