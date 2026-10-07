@@ -77,26 +77,42 @@ class PermissionPolicy:
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any] | None) -> PermissionPolicy:
-        data = dict(cfg or {})
+        """从 ``tool.permission`` 段构造。
 
-        raw_enabled = data.get("enabled")
-        if raw_enabled is None:
+        ⚠ **配置路径刻意与 ``tool.enabled`` 分开**（``permission.levels`` / ``permission.scope``）：
+        那两个「enabled」是**不同的东西** ——
+
+        - ``tool.enabled``：**工具名**列表（哪些内置工具可用），``build_default_registry`` 读它；
+        - ``tool.permission.levels``：**副作用等级**列表（哪些等级被授权），本方法读它。
+
+        它们一度共用了同一个键，于是「工具名里出现 ``grep``」被当成「未知的副作用等级」——
+        而**两者各自单独接线时都不会出错**，只有接起来才炸。
+        同一个键承载两种语义，迟早会撞。
+        """
+        data = dict(cfg or {})
+        permission = data.get("permission") or {}
+        if not isinstance(permission, Mapping):
+            raise ValueError(f"tool.permission 必须是映射，得到 {type(permission).__name__}")
+
+        raw_levels = permission.get("levels")
+        if raw_levels is None:
             enabled: Collection[SideEffect] = ("read",)
-        elif isinstance(raw_enabled, (str, bytes)):
-            enabled = (str(raw_enabled),)  # type: ignore[assignment]
+        elif isinstance(raw_levels, (str, bytes)):
+            enabled = (str(raw_levels),)  # type: ignore[assignment]
         else:
-            enabled = tuple(str(x) for x in raw_enabled)  # type: ignore[assignment]
+            enabled = tuple(str(x) for x in raw_levels)  # type: ignore[assignment]
 
         known = set(_SEVERITY)
         unknown = {str(x) for x in enabled} - known
         if unknown:
             raise ValueError(
-                f"未知的副作用等级：{', '.join(sorted(unknown))}；已知：{', '.join(sorted(known))}"
+                f"tool.permission.levels 里有未知的副作用等级："
+                f"{', '.join(sorted(unknown))}；已知：{', '.join(sorted(known))}"
             )
 
-        raw_scopes = data.get("scope") or {}
+        raw_scopes = permission.get("scope") or {}
         if not isinstance(raw_scopes, Mapping):
-            raise ValueError(f"tool.scope 必须是映射，得到 {type(raw_scopes).__name__}")
+            raise ValueError(f"tool.permission.scope 必须是映射，得到 {type(raw_scopes).__name__}")
         scopes = {
             str(level): SideEffectPolicy.from_config(paths)
             for level, paths in raw_scopes.items()

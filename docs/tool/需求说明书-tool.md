@@ -614,13 +614,21 @@ flowchart TD
 
 ```yaml
 tool:
-  # 默认关闭 bash —— 它能做任何事，默认打开等于默认给 agent 一台无锁的机器
+  # 哪些**工具**可用。**默认不含 bash** —— 它能做任何事，
+  # 默认打开等于默认给 agent 一台无锁的机器
   enabled: [read, grep, write]
-  # 各工具的可访问范围（**默认拒绝**，白名单式）
-  scope:
-    read:  ["${workdir}"]
-    grep:  ["${workdir}"]
-    write: ["${workdir}"]
+
+  # ⚠ 授权用的是**另一组键**（permission.*），不要与上面的 enabled 混淆：
+  #   tool.enabled            = 哪些**工具**可用（工具名）
+  #   tool.permission.levels  = 哪些**副作用等级**被授权
+  # 两者一度共用同一个键，于是「grep」被当成「未知的副作用等级」——
+  # 而**各自单独接线时都不会出错**，只有接起来才炸。
+  permission:
+    levels: [read, write]         # destructive 默认不授权
+    # 各等级的可访问范围（**默认拒绝**，白名单式）
+    scope:
+      read:  ["${workdir}"]
+      write: ["${workdir}"]
   limits:
     max_output_bytes: 262144      # 单次输出上限（256KB）
     max_output_lines: 2000
@@ -773,7 +781,7 @@ redis:
 | `DT-2` | Redis 不可用时 | 按副作用分级 / 一律拒绝 / 一律放行 | **按副作用分级**。只读重复无害，写入重复是事故；一律拒绝会让 Redis 的可用性变成整个 agent 的可用性 |
 | `DT-3` | 幂等状态权威 | Redis 快路径 + PG 权威 / 纯 Redis | **Redis + PG**。纯 Redis 的问题是「一次清库就静默地变成可以重复执行」，而这正是本模块存在的理由 |
 | `DT-4` | 副作用等级谁定 | 工具自己声明 / 框架统一 | **工具自己声明**。框架推不出来（`bash` 既可能是 `ls` 也可能是 `rm -rf`），且它同时决定权限与确认策略 |
-| `DT-5` | 工具定义 → `ToolSpec` 的转换点 | 组合根 / gateway 再导出 / `src/tool` 自己 import provider | **组合根**。`tool` 不能 import `provider`（契约 4），而契约是机械强制的，不该为它开豁免 |
+| `DT-5` | 工具定义 → `ToolSpec` 的转换点 | 组合根 / **gateway 提供构造入口** / `src/tool` 自己 import provider | **转换在组合根，但构造入口由 gateway 提供**（实现期修正，见架构文档 `RT-13`）。原本只写了「组合根」—— 一写代码就发现组合根**自己也不能** import provider（B-1 的源码扫描会红），于是它无路可走 |
 | `DT-6` | `bash` 默认状态 | 默认关闭 / 默认打开 | **默认关闭**。它等于把一台无锁的机器交给模型；默认打开时「忘了关」的代价不可逆 |
 | `DT-7` | 结果缓存存什么 | 只存摘要 / 存完整结果 / 不存 | **有上限地存**（默认 64KB），超限只存摘要。存完整结果会撞上「Redis 实测 `maxmemory=0`、无淘汰兜底」这条 —— 得由我们自己给上限 |
 | `DT-8` | 不确定状态的重试策略 | 工具层自动重试 / 交给上层 / 永不重试 | **交给上层**。工具层不具备判断「这次副作用到底发生没有」的信息，自动重试就是在赌 |

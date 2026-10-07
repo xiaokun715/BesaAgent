@@ -188,3 +188,88 @@ gateway:
         input: 0.001
         output: 0.002
         cached_input: 0.0001
+
+# --------------------------------------------------------------------------- #
+# 工具：给模型用的能力。**每一条默认值都是「安全的那一侧」** ——
+# 默认允许的那些，出事时的代价最大。
+# --------------------------------------------------------------------------- #
+tool:
+  # **默认不含 bash** —— 它等于把一台无锁的机器交给模型（DT-6）。
+  # 要开就显式加进这个列表。
+  enabled: [read, grep, write]
+
+  # 授权。⚠ 这里的 `levels` 与上面的 `enabled` 是**两件不同的事**：
+  #   tool.enabled          = 哪些**工具**可用（工具名）
+  #   tool.permission.levels = 哪些**副作用等级**被授权
+  # 它们一度共用同一个键，于是「grep」被当成「未知的副作用等级」——
+  # 而两者各自单独接线时都不会出错，只有接起来才炸。
+  permission:
+    levels: [read, write]         # destructive 默认不授权
+    # 各等级的可访问范围。**默认拒绝**：没配就是不许访问（C-T-1）——
+    # 「忘了配」的默认行为恰好是最危险的那种，所以不能反过来。
+    scope:
+      read: ["${BESA_WORKDIR:-.}"]
+      write: ["${BESA_WORKDIR:-.}"]
+
+  limits:
+    max_output_bytes: 262144      # 单次输出上限（进入上下文的硬上限）
+    max_output_lines: 2000
+    timeout_s: 60
+    max_cpu_s: 30                 # ⚠ soft 模式下不生效
+    max_memory_mb: 512            # ⚠ 同上
+    max_processes: 32             # ⚠ 同上
+    max_calls_per_run: 200        # **一次运行的调用总次数上界**（不是环检测）
+    max_call_depth: 8
+
+  # 结果处置：超过阈值就**落盘返路径**，截断只作为降级。
+  # 截断是不可逆的信息丢失 —— 模型会基于残缺的开头下结论。
+  result:
+    spill_threshold_bytes: 65536
+    spill_total_quota_mb: 512     # **没有「不限」这个选项**（C-T-9）
+    spill_ttl_hours: 24
+
+  output:
+    redact: true                  # 回灌给模型前抹掉疑似密钥
+    # 敏感路径**直接拒绝**，不指望脱敏兜底 —— 脱敏是尽力而为
+    deny_paths: [".env", "**/.env", "**/id_rsa", "**/*.pem", "**/.aws/credentials"]
+
+  # 沙箱。soft 模式有几项**没有真正生效**，启动期会告警 + doctor 里可见（NFR-T-10）。
+  # 让人以为「配了就安全」比不配更危险。
+  sandbox:
+    mode: soft                    # soft（一期）| isolated（二期：容器 / Job Object）
+    isolated_workdir: true
+    clean_env: true               # **不继承宿主环境** —— 否则 bash env 能打出全部密钥
+    allow_network: false          # ⚠ soft 模式下不生效
+
+  injection:
+    check_path_traversal: true
+    url_allowlist: []             # **空 = 不允许任何外部地址**（C-T-8）
+    block_private_networks: true  # 169.254.169.254 / 127.0.0.1 / 10.x ...
+
+  # 工具体检与按需暴露（FR-T-12 / FR-T-13）
+  catalog:
+    duplicate_similarity_threshold: 0.92   # 超此值告警；**不自动合并**
+    selection: category           # off | category | rag
+    rag_top_k: 20
+    embedding_alias: emb.default  # 复用 gateway 的 embedding 逻辑名（只有一份口径）
+
+# --------------------------------------------------------------------------- #
+# 幂等：同一个调用，无论被提交几次，副作用只发生一次。
+# 判定逻辑在 src/tool/idempotency.py；Redis 只是**快路径**，权威记录在 Postgres。
+# --------------------------------------------------------------------------- #
+idempotency:
+  enabled: true
+  key_field: idempotency_key      # 调用方在参数里显式给 key 时用的字段名
+  lease_s: 120                    # 占用租约；到期视为持有者已崩溃
+  result_ttl_s: 3600              # Redis 结果缓存
+  max_cached_result_bytes: 65536  # 超过只存摘要（去重仍生效）
+  # 幂等不可用时的行为。**没有默认值，必须显式配**（C-T-3）——
+  # 逼配置者做决定，因为「静默降级」正是这类失效最危险的形态。
+  on_unavailable:
+    read: allow_with_warning
+    write: refuse
+    destructive: refuse
+  redis:
+    # ⚠ 前缀是 besa_agent: 而不是 besa: —— 本机 6379 上 `besa:` 已被兄弟项目
+    # （besa-iv-kb 的 Celery 队列）占用。**严禁 FLUSHDB**。
+    key_prefix: "besa_agent:tool:"

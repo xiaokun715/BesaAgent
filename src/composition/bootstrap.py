@@ -18,13 +18,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from composition.event_sink import BufferingEmitter, flush_events
+from composition.tools import build_tools, to_tool_specs
 from composition.usage_sink import to_usage_rows, try_flush_usage
 from foundation.clock import Clock, SystemClock
 from foundation.database import Database
@@ -36,8 +37,11 @@ from gateway.health import HealthPolicy, HealthRegistry
 from gateway.rate_limit import LocalRateLimiter, RateLimitPolicy, build_rate_limiter
 from gateway.registry import Registry
 from gateway.retry import RetryPolicy
+from gateway.tools import ToolSpec
 from gateway.usage import UsageLedger
 from repo.usage import UsageRepo, UsageRow
+from tool.catalog import Catalog, CatalogIssue
+from tool.executor import ToolExecutor
 
 __all__ = ["Runtime", "build_runtime"]
 
@@ -62,6 +66,41 @@ class Runtime:
     #: 事件缓冲器。``events`` 是注入的 ``EventEmitter`` 时它是 ``None``
     #: （那种情况下事件的去向由注入方决定，不归组合根管）。
     event_sink: BufferingEmitter | None = None
+    #: 工具层的执行入口。工具**不是**每次调用都建 —— 注册表、权限策略、
+    #: 熔断计数都是有状态的，每次重建等于每次都从头开始。
+    tools: ToolExecutor | None = None
+    catalog: Catalog | None = None
+
+    async def inspect_tools(self) -> tuple[CatalogIssue, ...]:
+        """启动期的工具体检（重复 / 冲突）。
+
+        **失败不阻断启动**（``Catalog.inspect`` 内部捕获）——
+        与「缺密钥的模型软失败」同一条纪律。但它必须在**启动后不久**调一次：
+        体检的价值在于「在有人用这些工具之前发现它们重复了」。
+        """
+        if self.catalog is None:
+            return ()
+        return await self.catalog.inspect()
+
+    async def tool_specs(
+        self,
+        *,
+        categories: Iterable[str] | None = None,
+        query: str = "",
+        session_id: str = "",
+    ) -> tuple[ToolSpec, ...]:
+        """挑出该给模型看的工具，并转成厂商形状。
+
+        这是**业务侧唯一需要的入口** —— 它把「按类别/检索筛选」与
+        「转成 ``ToolSpec``」两件事收在一起，调用方不必知道这两步的顺序，
+        也不必知道 ``src/tool`` 不认识 ``src/provider`` 这回事。
+        """
+        if self.catalog is None:
+            return ()
+        definitions = await self.catalog.select(
+            categories=categories, query=query, session_id=session_id
+        )
+        return to_tool_specs(definitions)
 
     async def flush_pending(self) -> None:
         """把待落库的**用量与事件在同一个事务里**交付。
@@ -135,6 +174,7 @@ def build_runtime(
     ledger: UsageLedger | None = None,
     provider_options: Mapping[str, Any] | None = None,
     database: Database | None = None,
+    idempotency_store: Any | None = None,
 ) -> Runtime:
     """按配置装配出可用的运行时。
 
@@ -145,8 +185,10 @@ def build_runtime(
             生产路径不传，因此走真实网络。
         database: 持久化执行入口。**由 app 层建好后注入** ——
             ``src/`` 不能 import ``apps/``，所以这里只接收、不构造。
-            ``None`` 表示这个进程不落库（默认配置下的 CLI 就是这种情形），
-            此时用量记在内存里、随进程消失，与今天的 CLI 行为一致。
+            ``None`` 表示这个进程不落库，此时**有副作用的工具会被拒**
+            （幂等没有权威记录 = 真的没有幂等保护）。
+        idempotency_store: 幂等的快路径（Redis）。同样由 app 层注入。
+            ``None`` 时退到「只用权威记录」的慢路径 —— **语义完全正确，只是慢**。
 
     Raises:
         SettingsError: 配置文件缺失 / 语法错误 / 插值变量未定义。
@@ -170,6 +212,9 @@ def build_runtime(
     # **不落库时保持 NullEmitter**：攒起来也没地方去，只会白占内存 ——
     # 而「攒着不写」比「当场丢掉」更糟，因为它把丢失推迟到了缓冲区溢出那一刻。
     event_sink = BufferingEmitter() if (events is None and database is not None) else None
+    # **gateway 与工具层共用同一个 emitter** —— 于是用量、模型事件、工具事件
+    # 落进同一个事务（`T-M`：B-4 正名为「每个模块只有一个事件出口」）。
+    emitter = events or event_sink or NullEmitter()
 
     gateway = Gateway(
         registry,
@@ -181,16 +226,26 @@ def build_runtime(
         rate_limit=_build_limiter(gateway_cfg.get("rate_limit"), resolved_clock),
         ledger=ledger or UsageLedger(),
         cost=CostSheet.from_config(gateway_cfg.get("cost")),
-        events=events or event_sink or NullEmitter(),
+        events=emitter,
         clock=resolved_clock,
         deadline_s=_deadline(gateway_cfg),
     )
 
+    bundle = build_tools(
+        tool_cfg=cfg.section("tool"),
+        idempotency_cfg=cfg.section("idempotency"),
+        gateway=gateway,
+        database=database,
+        store=idempotency_store,
+        events=emitter,
+    )
+
     _log.info(
-        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，落库=%s",
+        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，工具 %d 个，落库=%s",
         cfg.env,
         len(registry.models),
         ", ".join(sorted(registry.aliases)) or "（无）",
+        len(bundle.executor.registry),
         "开（用量 + 事件）" if database is not None else "关（只留在内存）",
     )
     return Runtime(
@@ -199,6 +254,8 @@ def build_runtime(
         gateway=gateway,
         database=database,
         event_sink=event_sink,
+        tools=bundle.executor,
+        catalog=bundle.catalog,
     )
 
 

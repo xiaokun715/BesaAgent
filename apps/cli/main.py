@@ -46,15 +46,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    try:
-        runtime = open_runtime(args.env)
-    except SettingsError as exc:
-        # 配置错误是**用户可见**的失败，不该以回溯的形式抛出 ——
-        # 回溯会淹没「哪个文件的哪个字段错了」这条真正有用的信息。
-        print(f"配置错误：{redact_secrets(str(exc))}", file=sys.stderr)
-        return 2
-
     async def go() -> int:
+        # **运行时在事件循环里建**：建 SQLite 的表、跑工具体检都要 await。
+        # 早先它在 ``asyncio.run`` 之外建，于是 CLI 只能不注入 database ——
+        # 而那会让有副作用的工具被拒（幂等没有权威记录 = 真的没有幂等保护）。
+        # 把入口改成 async 比在别处绕开它更诚实。
+        try:
+            runtime = await open_runtime(args.env)
+        except SettingsError as exc:
+            # 配置错误是**用户可见**的失败，不该以回溯的形式抛出 ——
+            # 回溯会淹没「哪个文件的哪个字段错了」这条真正有用的信息。
+            print(f"配置错误：{redact_secrets(str(exc))}", file=sys.stderr)
+            return 2
         try:
             return await args.handler(runtime, args)
         finally:

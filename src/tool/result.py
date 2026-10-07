@@ -23,8 +23,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from foundation.errors import redact_secrets
 from tool.base import ToolContext, truncate
@@ -57,6 +59,23 @@ class ResultPolicy:
     spill_ttl_hours: int = 24
     #: 摘要里给模型看多少行
     summary_lines: int = 40
+
+    @classmethod
+    def from_config(cls, cfg: Mapping[str, Any] | None) -> ResultPolicy:
+        """从 ``tool.result`` / ``tool.output`` 段构造。"""
+        data = dict(cfg or {})
+        result = dict(data.get("result") or {})
+        output = dict(data.get("output") or {})
+
+        spill_dir = result.get("spill_dir")
+        return cls(
+            redact=bool(output.get("redact", True)),
+            spill_threshold_bytes=int(result.get("spill_threshold_bytes", 65_536)),
+            spill_dir=Path(str(spill_dir)) if spill_dir else None,
+            spill_total_quota_mb=int(result.get("spill_total_quota_mb", 512)),
+            spill_ttl_hours=int(result.get("spill_ttl_hours", 24)),
+            summary_lines=int(result.get("summary_lines", 40)),
+        )
 
     def resolve_dir(self, ctx: ToolContext) -> Path | None:
         """算出这次该往哪落盘。范围为空时**不落盘**（退回截断）。"""

@@ -735,12 +735,34 @@ flowchart LR
     EX --> AG["src/agent"]
 ```
 
-**工具定义到 `ToolSpec` 的转换在组合根**（`DT-5`）：
-`src/tool` 不能 import `provider`（契约 4 机械强制），
-而契约不该为一个模块开豁免 —— 一旦开了，下一个模块也会要求开。
+**工具定义到 `ToolSpec` 的转换在组合根**（`DT-5`），但**构造入口由 gateway 提供**：
+
+```mermaid
+flowchart LR
+    TD["src/tool<br/>ToolDefinition"] --> C["src/composition<br/>to_tool_specs()"]
+    C --> G["gateway.tools.tool_spec()"]
+    G --> TS["provider.types.ToolSpec"]
+    C -.不直接 import.-> TS
+```
+
+**为什么中间要有 `gateway.tools` 这一层**（`RT-13`）：组合根**自己也不能 import provider** ——
+B-1 的源码扫描覆盖整个 `src/`，抓到就红。于是「转换在组合根」只说了一半的话，
+组合根会走进一个死胡同：
+
+    Gateway.chat() 的形参是 Sequence[ToolSpec]，而 ToolSpec 是 provider 的类型；
+    要构造它就得 import provider；而除了 gateway，谁都不许 import provider。
+
+出路是让 **gateway 提供构造入口**（它本来就 import provider，而 `ToolSpec`
+正是它自己 API 的形参）。于是组合根只 import `gateway`，
+**B-1 那条机械约束不需要开任何豁免** —— 这比开豁免好得多。
+
+> 对照：`GatewayResult.content` 用 `getattr` 是同一个目的（让上层不必 import
+> `provider.types`），但那是**权宜** —— 它让上层做鸭子类型访问、放弃类型安全。
+> 给出一个**构造函数**则干净得多：上层拿到的仍是真类型。
 
 **没有 Redis 时**：`IdempotencyStore` 用一个「永远不可用」的实现，
-于是所有写类工具自然被拒（`FR-T-06`），行为与配置一致、不需要额外分支。
+于是幂等**退到只用权威记录的慢路径**（`RT-2`）—— 语义完全正确，只是每次多一次库往返。
+只有**连权威记录也没有**时，有副作用的工具才被拒（`FR-T-06`）。
 
 ### 7.1 工具事件与它需要的字段（`DT-10` / `DT-11`）
 
@@ -950,3 +972,11 @@ flowchart LR
 | **RT-9** | **结果的「三档」改成「两档 + 一个降级」** | 「小 / 中（截断）/ 大（落盘）」 | 「≤ 阈值 → 原样；> 阈值 → 落盘；落不下 → **退回截断**」 | 实现时发现那个「中档」**没有存在的理由**：截断相对落盘没有任何好处，只是少写一个文件，代价却是**不可逆的信息丢失**。原稿的三档会让读者以为「截断是一种正常处置」，而它其实只该作为降级出现 |
 | **RT-10** | **`command` 类注入不做运行时检测** | `InjectionKind` 里列了 `command`，暗示要拦 | 保留词汇，但**不做**运行时黑名单；改成一条**结构性测试**（源码里不得把变量拼进 shell 字符串） | 本模块现状下不存在命令注入 —— 没有任何工具把参数**拼进**一条 shell 命令（``bash`` 的 ``command`` 本身就是那条命令）。真正会引入它的是将来某个工具去拼字符串，而它的答案是「**不拼**」，不是一个运行时黑名单。把这条写成代码里的一条断言，比写成文档里的一句话有用 |
 | **RT-11** | **`sandbox` 的构造期告警** | 未涉及 | 构造 ``Sandbox`` 时若处于 soft 模式，**告警一次**（不是每次调用） | 未强制的限制项必须在**配置、启动日志、doctor 三处**都能看到（`NFR-T-10`）。每次调用都告警会变噪音，而完全不告警会让那份配置变成一句谎话 |
+
+### 第五批：接线时发现的（把工具层接到组合根与 CLI 上）
+
+| # | 修订 | 原稿 | 现在 | 理由 |
+|---|---|---|---|---|
+| **RT-12** | ⚠ **`tool.enabled` 被两种语义共用** | 配置里只有 ``enabled`` 一个键 | 拆成 `tool.enabled`（**工具名**）与 `tool.permission.levels`（**副作用等级**） | **真 bug，而且形态很典型**：两个模块各自读同一个键、各以为是自己的那个意思 —— `build_default_registry` 读它当工具名，`PermissionPolicy` 读它当副作用等级。于是「``grep``」被报成「未知的副作用等级」。**两者各自单独接线时都不会出错，只有接起来才炸** —— 与 `RT-3` 那种「局部看起来对」是同一类，但这个是**两个模块对同一个名字的理解不同** |
+| **RT-13** | **`ToolSpec` 的构造入口由 gateway 提供** | `DT-5` 只写了「转换在组合根」 | 组合根 `to_tool_specs()` → `gateway.tools.tool_spec()` | 一写代码就撞墙：组合根**自己也不能** import provider（B-1 的扫描覆盖整个 `src/`）。只写「转换在组合根」等于把死胡同换个说法。出路是 gateway 提供构造函数 —— 它本来就 import provider，而 `ToolSpec` 正是它自己 API 的形参。**结果是 B-1 不需要开任何豁免** |
+| **RT-14** | **CLI 的 `open_runtime` 变 async，并注入内存 SQLite** | 同步入口 + 「CLI 默认不注入 database」 | `async def open_runtime`；默认建一个**内存 SQLite 并建好表** | 原稿的理由（「内存库没有表，注入会让每次 flush 都以表不存在失败」）**是对的** —— 但它指向的结论错了：该修的是「建表」而不是「不注入」。不注入 database 的代价是**有副作用的工具全被拒**（幂等没有权威记录），而 CLI 恰恰是本地写文件最自然的场景。建表要 await，所以入口必须变 async —— 这比在别处绕开它诚实 |

@@ -32,14 +32,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from foundation.db import Base
 from foundation.settings import load_config
 
-# 让 Alembic 看到全部表定义。**这些 import 是有副作用的**（注册到 Base.metadata），
-# 所以不能因为「看着没用到」就删掉。
+# 让 Alembic 看到全部表定义。
 #
-# 每新增一张表都要在这里加一行 —— 漏了的话 autogenerate 会认为那张表
-# **应该被删掉**，然后生成一个 DROP TABLE 的迁移。
-import repo.event  # noqa: F401
-import repo.tool  # noqa: F401
-import repo.usage  # noqa: F401
+# ⚠ 漏一张表，autogenerate 会认为它**应该被删掉**，然后生成一个 DROP TABLE 的迁移。
+# 所以「有哪些表」这件事只允许有一个事实来源 —— 就是 `repo.models`。
+import repo.models  # noqa: F401
 
 config = context.config
 

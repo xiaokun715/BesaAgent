@@ -103,9 +103,27 @@ async def test_memory_database_is_discarded_on_exit():
 
 async def test_config_can_point_at_a_file():
     """配了 dsn 就用配的，没配就用内存 —— 组合根不必判断「有没有配」。"""
-    db = open_database_from_config({})
+    db = await open_database_from_config({})
     assert db.engine.url.database in (None, ":memory:"), "缺省应当是内存库"
     await db.aclose()
+
+
+async def test_opening_a_database_creates_the_schema():
+    """**建表是 ``open_database`` 的一部分**。
+
+    不建的话，第一次 ``flush_usage`` 会以「表不存在」失败 ——
+    而那个失败看起来像「数据库配错了」，实际只是漏了一件本该在这里做的事。
+    """
+    from sqlalchemy import text
+
+    db = await open_database()
+    try:
+        async with db.transaction() as tx:
+            # 三张表都要在：用量、事件、工具执行记录
+            for table in ("usage", "usage_drops", "event", "tool_execution"):
+                await tx.execute(text(f"SELECT count(*) FROM {table}"))
+    finally:
+        await db.aclose()
 
 
 def test_memory_dsn_uses_aiosqlite_driver():
