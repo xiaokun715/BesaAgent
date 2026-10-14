@@ -60,7 +60,7 @@ filterwarnings = ["error::DeprecationWarning"]
 [tool.importlinter]
 root_packages = [
     "agent", "context", "event", "foundation", "gateway",
-    "memory", "multiagent", "provider", "repo", "skill", "tool",
+    "memory", "multiagent", "provider", "repo", "skill", "strategy", "tool",
 ]
 # ⚠ `runtime` 曾经在这个列表里。**该包已被删除**（见 docs/agent 的 `DA-2`：
 #   单 agent 的运行时只有 `src/agent/runtime.py` 一个，「会话领域模型」那一层没有独立模块）。
@@ -137,6 +137,7 @@ source_modules = [
     "repo",
     "memory",
     "skill",
+    "strategy",
     "tool",
 ]
 forbidden_modules = ["provider"]

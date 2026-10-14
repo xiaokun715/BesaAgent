@@ -28,6 +28,7 @@ from composition.agent import build_agent
 from composition.context import build_context
 from composition.event_sink import BufferingEmitter, flush_events
 from composition.memory import build_memory
+from composition.strategy import build_strategy
 from composition.tools import build_tools, to_tool_specs
 from composition.usage_sink import to_usage_rows, try_flush_usage
 from foundation.clock import Clock, SystemClock
@@ -45,6 +46,7 @@ from gateway.usage import UsageLedger
 from memory.manager import MemoryService
 from context.manager import ContextManager
 from agent.runtime import AgentRuntime
+from strategy.selector import StrategySelector
 from repo.usage import UsageRepo, UsageRow
 from tool.catalog import Catalog, CatalogIssue
 from tool.executor import ToolExecutor
@@ -85,6 +87,9 @@ class Runtime:
     #: 单 agent 运行时的唯一入口。``None`` = 未启用（``agent.enabled=false``）。
     #: 上下文为 ``None`` 时它照样工作 —— 只是没有运行内压缩。
     agent: AgentRuntime | None = None
+    #: 组件策略层的入口。``None`` = 未启用（``strategy.enabled=false``）。
+    #: **它只产出配置（``AgentProfile``），不构造组件** —— 消费侧见 docs/strategy。
+    strategy: StrategySelector | None = None
 
     async def inspect_tools(self) -> tuple[CatalogIssue, ...]:
         """启动期的工具体检（重复 / 冲突）。
@@ -294,8 +299,16 @@ def build_runtime(
         clock=resolved_clock,
     )
 
+    # 组件策略层排在最后：它只用配置与 foundation，不依赖上面任何一个 ——
+    # 排在最后是因为它**登记的是别的模块的能力**，那些能力得先装配好。
+    strategy_bundle = build_strategy(
+        strategy_cfg=cfg.section("strategy"),
+        events=emitter,
+        clock=resolved_clock,
+    )
+
     _log.info(
-        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，工具 %d 个，落库=%s，记忆=%s，上下文=%s，agent=%s",
+        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，工具 %d 个，落库=%s，记忆=%s，上下文=%s，agent=%s，策略=%s",
         cfg.env,
         len(registry.models),
         ", ".join(sorted(registry.aliases)) or "（无）",
@@ -304,6 +317,7 @@ def build_runtime(
         "开" if memory_bundle is not None else "关",
         "开" if context_bundle is not None else "关",
         "开" if agent_bundle is not None else "关",
+        "开" if strategy_bundle is not None else "关",
     )
     return Runtime(
         settings=cfg,
@@ -316,6 +330,7 @@ def build_runtime(
         memory=memory_bundle.service if memory_bundle is not None else None,
         context=context_bundle.manager if context_bundle is not None else None,
         agent=agent_bundle.runtime if agent_bundle is not None else None,
+        strategy=strategy_bundle.selector if strategy_bundle is not None else None,
     )
 
 

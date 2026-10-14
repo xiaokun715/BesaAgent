@@ -496,3 +496,98 @@ agent:
     execution:    { enabled: true, description: "测试执行" }
     analysis:     { enabled: true, description: "结果分析" }
     defect:       { enabled: true, description: "缺陷管理" }
+
+# --------------------------------------------------------------------------- #
+# 组件策略层：把「这次任务该用哪套做法」变成跑之前就能回答、且说得清理由的问题。
+#
+# ⚠ 这一层**不实现任何策略** —— 它只做登记 / 校验 / 选择 / 装配。
+#   策略的实现归各自的家（context / memory / tool / agent），工厂归组合根。
+# --------------------------------------------------------------------------- #
+strategy:
+  enabled: true
+  # 降级目标（FR-ST-16）。**必须存在且通过契约校验** —— 配错了启动期硬失败（C-ST-2）
+  default_profile: baseline
+
+  selection:
+    rules: true                   # 先规则（零成本、可解释）
+    evaluated: true               # 再评测数据（需要历史积累）
+    weights: { cost: 0.3, latency: 0.2 }   # λc / λt，**只作用于非高风险任务**（C-ST-4）
+    min_samples: 20               # 样本少于它就当"没有数据"
+    rule_saturation: 2            # 规则层命中几个场景算满分（分母是饱和数，不是关键词总数）
+
+  guard:
+    # 高风险只在已验证组合里选（FR-ST-08）。关掉它必须告警（C-ST-3）
+    high_risk_requires_validated: true
+    risk_source: caller           # caller | template
+    sensitive_components: [permission, tool_selection]
+
+  contracts:
+    # ⚠ **关掉它等于关掉本模块的理由**（C-ST-1）—— 关掉时启动期会告警
+    enabled: true
+    extra_rules: []
+
+  # 场景模板（FR-ST-13）。**加模板不改代码**。
+  # 只写"这个场景要固定"的那几个组件，其余沿用 baseline。
+  # trim：当出现某个输入资产时，把对应组件**回退到 baseline**（FR-ST-14）。
+  templates:
+    kb_qa:
+      risk: low
+      description: 知识库问答
+      context: tiered
+      retrieval: hybrid
+      memory: session
+      permission: readonly
+      tool_selection: fixed
+      validation: format
+      trim: {}
+    case_generation:
+      risk: low
+      description: 用例生成
+      context: tiered
+      retrieval: keyword
+      memory: session
+      permission: restricted
+      tool_selection: category
+      validation: format
+      # 已经有用例时，不需要再去检索协议知识（那个环节是为"从零生成"准备的）
+      trim: {has_test_cases: [retrieval]}
+    env_operation:
+      risk: high
+      description: 测试环境操作
+      context: tiered
+      retrieval: keyword
+      memory: stateless
+      permission: restricted
+      tool_selection: dependency_based
+      validation: rules
+      execution: retry
+      trim: {}
+    fault_diagnosis:
+      risk: high
+      description: 复杂故障诊断
+      context: tiered
+      retrieval: case_kb
+      memory: structured
+      permission: readonly
+      validation: rules
+      execution: retry
+      trim: {}
+    # 默认配置：**高风险权限一概不含** —— 它是"没人做决定"时的落点（FR-ST-16）
+    baseline:
+      risk: low
+      description: 默认配置（降级目标）
+      context: tiered
+      retrieval: keyword
+      memory: stateless
+      permission: readonly
+      tool_selection: fixed
+      validation: format
+      execution: single
+      trim: {}
+
+  evaluation:
+    enabled: true
+    schedule: "23 4 * * *"        # 与 memory 的维护任务错开
+    benchmark_set: default
+    # **必须有上界**（C-ST-5）：组合是几十到几百个，一次全评能跑到天亮
+    max_combos_per_run: 20
