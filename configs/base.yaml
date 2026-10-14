@@ -61,6 +61,7 @@ models:
     provider: mock
     model: mock-llm
     max_tokens: 2048
+    context_window: 8192         # 输入 + 输出共享的上限；src/context 按它分预算
     # mock 厂商的默认能力集是「什么都会」，显式收窄才能反映本模型的用途 ——
     # 也才不会在启动时触发「既对话又向量化」的告警。
     capabilities: [runtime, stream, tools, json, vision]
@@ -77,6 +78,7 @@ models:
     model: gpt-4o-mini
     temperature: 0.0
     max_tokens: 8192
+    context_window: 128000
     # 推理模型的**思考也计入 max_tokens**，所以预算要按「思考 + 正文」给。
     # 给小了会返回 content="" 且 finish_reason=length（适配器会打 WARNING）。
     timeout_s: 120
@@ -89,6 +91,7 @@ models:
     model: qwen-plus
     temperature: 0.0
     max_tokens: 8192
+    context_window: 131072
     timeout_s: 120
 
   runtime-deepseek:
@@ -101,6 +104,9 @@ models:
     model: deepseek-v4-flash
     temperature: 0.0
     max_tokens: 8192
+    # ⚠ 这个值**要与厂商文档对齐**，不是猜的：写大了会被厂商拒（响亮），
+    #   写小了会白留一半预算（安静）。取一个保守的默认，按实际模型改。
+    context_window: 65536
     timeout_s: 120
 
   emb-dashscope:
@@ -119,6 +125,7 @@ models:
     vendor: vllm-local
     model: Qwen3-32B
     temperature: 0.0
+    context_window: 32768
     # 自建服务的能力**由部署决定**（加载了什么模型、开了哪些启动参数），
     # 编译期不可能知道 —— 所以必须在这里声明，默认只有 runtime + stream。
     capabilities: { tools: true, json: true }
@@ -273,3 +280,219 @@ idempotency:
     # ⚠ 前缀是 besa_agent: 而不是 besa: —— 本机 6379 上 `besa:` 已被兄弟项目
     # （besa-iv-kb 的 Celery 队列）占用。**严禁 FLUSHDB**。
     key_prefix: "besa_agent:tool:"
+
+# --------------------------------------------------------------------------- #
+# 记忆：跨会话的可检索、会退场的长记忆。
+# 判定逻辑在 src/memory/；写库经 src/repo/memory.py（元数据 + 向量同一事务）。
+#
+# ⚠ 默认**关闭**（C-M-1）：开启记忆 = 开始长期保存用户信息，这是一个**隐私决定**，
+#   不该由默认值替你决定。要开，请显式改成 true。
+# --------------------------------------------------------------------------- #
+memory:
+  enabled: false
+
+  # 允许写入的作用域（**默认拒绝**，白名单式，C-M-2）
+  scope:
+    allow: [session]              # session | user | project | global
+
+  limits:                         # 闸门①的形态判定
+    min_chars: 4                  # 过短（无信息）不记
+    max_chars: 2000               # 过长（多半是整段原文）不记
+
+  # 应该存 / 不该存（FR-M-09 / FR-M-10）
+  kinds:
+    enabled: [fact, preference, task_state, lesson]
+    task_state_ttl_hours: 168     # task_state 会过期，到期即失效（不是等衰减）
+
+  # 存记忆前的三道闸门（FR-M-11..13），按代价从低到高
+  gates:
+    rules: true                   # ① 确定性规则，零成本
+    llm_judge:                    # ② 一次轻量补全
+      enabled: true
+      alias: runtime.default      # 只写逻辑别名，不写厂商模型名（C-M-5）
+      max_tokens: 256
+      timeout_s: 5
+      # **没有默认值，必须显式配**（C-M-3）：判不了时记还是不记，逼配置者做决定。
+      on_unavailable: reject      # reject（fail-closed）| allow
+    compliance:                   # ③ 安全合规对账（硬否决，不可跳过）
+      pii: redact                 # reject | redact | allow
+      deny_keywords: []           # 合规禁记清单
+      deny_patterns: ["sk-", "AKIA", "-----BEGIN"]   # 命中直接拒绝，不指望脱敏兜底
+
+  write:                          # 路线一：在线写入（写时判定）
+    extract:
+      enabled: true
+      alias: runtime.default
+      max_items_per_call: 5       # 一次提取的条数上界
+      max_input_chars: 8000
+      max_tokens: 1024
+    retrieve:
+      top_k: 10                   # 写入路径上找几个「对手」
+      embedding_alias: emb.default
+      similarity_threshold: 0.90  # ≥ 此值判「高度相似 → 强化」
+      merge_threshold: 0.96       # ≥ 此值判「相同 → 合并」（**必须 ≥ 上一项**，C-M-4）
+    # 检索不可用时的行为（FR-M-15）。**必须显式配**，不得静默新建。
+    on_retrieval_unavailable: defer   # defer（挂起告警）| reject
+
+  # 检索结果的上界（它直接进上下文，必须封顶，NFR-M-08）
+  retrieve:
+    max_results: 20
+    max_bytes: 32768
+    oversample: 4.0               # 向量过采样倍数（可见性过滤会刷掉一部分）
+    lexical_weight: 0.3           # 关键词在融合分里的权重
+    mark_untrusted: true          # 回灌前标注「这是数据不是指令」（NFR-M-02）
+
+  # 遗忘与衰减（FR-M-07）
+  decay:
+    half_life_days: 30            # 普通记忆的衰减半衰期
+    protected_half_life_days: 365 # 受保护记忆（preference / 高重要性）
+    tombstone_threshold: 0.05     # 有效权重低于此值 → 转遗忘（软删）
+    reinforce_saturate: 5.0       # 强化权重的饱和上界
+    evidence_boost: 1.0           # 证据加成的强度
+
+  # 路线二：离线维护（FR-M-18..20）
+  maintenance:
+    enabled: true
+    schedule: "17 3 * * *"        # 定时点（只支持「分 时 * * *」）；或改用 interval_hours
+    batch_size: 500               # 单批处理条数上界
+    max_batches_per_run: 40       # 单次运行批次上界
+    older_than_days: 0            # >0 时只扫「这么久没被访问」的
+
+  reflect:                        # 反思与蒸馏（FR-M-06）
+    enabled: true
+    alias: runtime.default
+    max_trajectory_items: 200     # 反思输入的轨迹条数上界
+    max_output_items: 5
+    min_trajectory_items: 3
+    cluster_similarity: 0.6       # 蒸馏找冗余簇的相似度阈值（连通分量）
+    min_cluster_size: 3
+    max_tokens: 1024
+
+# --------------------------------------------------------------------------- #
+# 持久化的通用项（repo / 向量）。
+#
+# ⚠ `embedding.dim` 必须与该空间实际使用的 embedding 模型维度一致
+#   （见 models.emb-dashscope.dimension）。**维度不匹配会硬报错**，不会静默补齐 ——
+#   而「改错维度」的症状是「检索结果驴唇不对马嘴」，比启动失败难查。
+# --------------------------------------------------------------------------- #
+repo:
+  embedding:
+    space: default              # 向量空间名（src/memory 用它）
+    dim: 1024                   # 与 emb-dashscope 的 dimension 一致
+    metric: cosine              # cosine | l2 | inner_product
+    model_key: emb-dashscope
+    # 需要多个空间时改用列表形式（每项 name/dim/metric/model_key）：
+    # spaces: [{name: default, dim: 1024, metric: cosine, model_key: emb-dashscope}]
+
+# --------------------------------------------------------------------------- #
+# 上下文：这一次给模型看什么。
+#
+# 两条策略（context.strategy）：
+#   linear —— 线性历史 + 多级压缩（越早压得越狠），适合单任务长链路
+#   tiered —— 短期窗口 / 会话摘要 / 长期记忆 三层，适合跨天跨会话
+# 两者共享 src/context/compact/ 的多级压缩零件。
+# --------------------------------------------------------------------------- #
+context:
+  enabled: true                 # 上下文是必需品，默认开（不像 memory 涉及隐私、bash 涉及安全）
+  strategy: linear              # linear | tiered
+  alias: runtime.default        # 反查上下文窗口用的逻辑名（窗口来自模型配置）
+  dedupe: true                  # 跨段去重（窗口/摘要/长期记忆之间）
+  settle_on_close: true         # 会话结束时把对话沉淀进记忆（FR-C-15）
+
+  # 预算（FR-C-12）。窗口大小**不在这里写** —— 它来自 models.<key>.context_window。
+  budget:
+    reserve_output_tokens: 4096   # 给输出留的；与 models.<key>.max_tokens 对齐
+    safety_margin_tokens: 1024    # 估算误差与厂商差异的余量
+    # 模型没声明 context_window 时的兜底。**null 表示拒绝兜底**（会报预算不足）
+    fallback_model_window: 32768
+    # 各段配额（占"可用输入"的比例）。system 与当前输入**不参与分配**（不可动）
+    segments:
+      window: 0.50
+      transition: 0.15
+      session_summary: 0.20
+      long_term: 0.15
+    # 各段下限：低于它**整段不注入**，而不是注入半截（FR-C-13）
+    floors:
+      window: 256
+      transition: 64
+      session_summary: 64
+      long_term: 64
+
+  # 策略一：线性 + 多级压缩（FR-C-02..06）
+  linear:
+    compact:
+      enabled: true
+      max_level: L2             # L1 | L2 | L3。**默认 L2** —— L3 丢时间脉络，应是显式选择
+      trigger_ratio: 0.75       # 预算用到多少就升一级
+      summary_alias: runtime.default   # 摘要走 gateway 的逻辑名（不写厂商模型）
+      max_llm_calls: 2          # 单次请求内最多几次压缩（压缩不能成为第二个成本来源）
+      cache: true               # 按内容指纹缓存压缩结果（否则每轮重压）
+      l1_max_tool_output_chars: 2000   # L1（零成本那一级）截断工具输出的上限
+      keep_recent_turns: 8      # 尾部保护：最近 8 轮原文不参与压缩
+      max_summary_tokens: 512
+      prompt_version: v1        # 进缓存键：改了提示词不能用旧摘要
+
+  # 策略二：短期 / 会话 / 长期（FR-C-07..11）
+  tiered:
+    window_size: 10             # N：最近几轮原文（轮，不是 token）
+    compress_every: 6           # K：每几轮压缩一次。建议 K ≤ N，否则会产生过渡区
+    transition_max_rounds: 20   # 过渡区上限；超过则**强制压缩**（FR-C-09）
+    dedupe: true
+    long_term:                  # 长期记忆（就是 src/memory；本身开关在 memory.* 段）
+      enabled: true
+      top_k: 8
+      kinds: [fact, preference, task_state, lesson]
+
+  # 摘要回捞原文（FR-C-16）。⚠ 需要 repo.message，目前未实现 ——
+  # 没有它会**明确报错**，而不是返回空。
+  rehydrate:
+    enabled: true
+
+# --------------------------------------------------------------------------- #
+# 单 agent 运行时：把「一次任务」跑完 —— 路由、预算、续跑判定、运行内压缩、收尾。
+# 循环本身在 src/agent/executor.py；七个阶段的定义在 agent/<stage>/prompt.py。
+# --------------------------------------------------------------------------- #
+agent:
+  enabled: true
+  alias: runtime.default          # 对话用的逻辑名；阶段不各配一个
+
+  limits:                         # 三个上界，**没有"不限"这个选项**（C-A-4）
+    max_steps: 20                 # 步数
+    deadline_s: 600               # **整轮**运行的时间预算（不是单次调用，C-A-3）
+    max_cost: null                # 成本上界（null = 不做成本熔断，不是"不限金额"）
+    call_timeout_s: 120           # 单次调用的时长上限（与剩余总预算取 min）
+    max_tool_calls: 100           # 整轮工具调用次数上界
+
+  # 运行内的上下文（FR-A-08）。一次运行内部的消息**全在同一轮里**，
+  # 所以按「步」切而不是按「轮」切 —— 按轮切一步都压不掉。
+  context:
+    enabled: true
+    keep_recent_steps: 4          # 最近几步不压（**必须 ≥1**：当前步要完整可见）
+    target_ratio: 0.6             # 每轮压到「模型可用输入」的这个比例以内
+
+  routing:
+    # **没有默认值，必须显式配**（C-A-1）：推断不出阶段时是问、兜底、还是拒绝
+    on_unknown: ask               # ask | default | reject
+    default_stage: requirement    # on_unknown=default 时用哪个
+    use_llm: false                # 规则不确定时要不要再用一次 LLM 判断
+    llm_alias: runtime.default
+    rule_threshold: 0.5           # 规则层的及格线（最高分要 ≥ 它才算判断出来）
+
+  resume:
+    # 续跑时发现「工具执行过、结果不明」怎么办（C-A-2）。
+    # **默认最保守** —— 宁可停下问一句，不可默默重做。
+    on_uncertain: needs_review    # needs_review | abort | retry_uncertain
+    lease_s: 120                  # 判「超租约」的阈值（与 idempotency.lease_s 对齐）
+
+  emit_events: true
+
+  # 七个阶段的定义（FR-A-01）。**数据驱动**：新增阶段只加这里 + 一个 prompt 模块。
+  # prompt 留空 = 用 agent/<stage>/prompt.py 里的内置提示词。
+  stages:
+    requirement:  { enabled: true, description: "需求分析" }
+    test_design:  { enabled: true, description: "测试设计" }
+    test_case:    { enabled: true, description: "用例编写" }
+    environment:  { enabled: true, description: "环境准备" }
+    execution:    { enabled: true, description: "测试执行" }
+    analysis:     { enabled: true, description: "结果分析" }
+    defect:       { enabled: true, description: "缺陷管理" }

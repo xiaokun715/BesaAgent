@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 from foundation.database import Database
 from gateway.gateway import Gateway
-from gateway.tools import ToolSpec, tool_spec
+from gateway.tools import ToolSpec, to_tool_specs
 from tool.catalog import Catalog, Embedder
 from tool.executor import CallStack, EventSink, ToolExecutor
 from tool.idempotency import DEFAULT_ON_UNAVAILABLE, IdempotencyGuard, UnavailableStore
@@ -154,21 +154,7 @@ def build_tools(
     return ToolsBundle(executor=executor, catalog=catalog, sandbox=sandbox)
 
 
-def to_tool_specs(definitions: Sequence[ToolDefinition]) -> tuple[ToolSpec, ...]:
-    """把工具定义转成厂商要的 ``ToolSpec``（`DT-5` 的转换点）。
-
-    **这一步只能在这里做**：``src/tool`` 不能 import ``src/provider``（契约 4），
-    而 ``src/gateway`` 也不该知道工具 —— 它只管「把给的参数传给模型」。
-
-    转换本身很薄（三个字段同名），**薄是对的** ——
-    它证明了两边的契约形状本来就一致；一旦哪天要在这里做映射表，
-    说明工具层的定义开始泄漏厂商细节了，那是该停下来看的信号。
-    """
-    return tuple(
-        tool_spec(
-            name=definition.name,
-            description=definition.description,
-            parameters=definition.parameters,
-        )
-        for definition in definitions
-    )
+#: 转换本身由 **gateway** 提供（`RT-13`）—— 组合根只是把它转出去，
+#: 因为上层（agent）不能 import composition。这里保留名字是为了让调用方
+#: 有一个稳定的入口，而不是每处都从 gateway 里拿。
+__all__ += ["to_tool_specs"]

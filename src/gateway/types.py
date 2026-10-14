@@ -48,6 +48,14 @@ class ModelSpec:
     capabilities: frozenset[Capability] = frozenset()
     priority: int = 0
     weight: float | None = None
+    #: 上下文窗口（输入 + 输出共享的上限），单位 token。
+    #:
+    #: **它是模型属性，所以放在模型配置里**（``models.<key>.context_window``），
+    #: 而不是让 ``src/context`` 自己配一个 —— 那样一换 alias 就与真实模型脱节，
+    #: 而两个错的方向代价不同：配大了会被厂商拒（响亮），配小了白留一半预算（安静）。
+    #:
+    #: ``None`` 表示**没声明**。缺省不是「无限」，见 `Registry.context_window`。
+    context_window: int | None = None
     #: 原始配置，交给 ``provider.build_provider`` 用
     config: Mapping[str, Any] = field(default_factory=dict)
     #: 注册期就失败的模型（如云厂商缺密钥）。**保留在注册表里**而不是丢掉 ——

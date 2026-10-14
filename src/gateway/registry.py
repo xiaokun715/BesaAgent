@@ -174,6 +174,19 @@ class Registry:
         """把 alias 展开成 ``ModelSpec`` 列表（顺序保持配置里的顺序）。"""
         return [self.model(key) for key in self.alias(alias).candidates]
 
+    def context_window(self, alias: str) -> int | None:
+        """按 alias 给出**可用于预算的上下文窗口**。
+
+        **取候选里最小的那个**，而不是第一个。理由与路由有关：降级可能把请求交给
+        链上**任何一个**候选，若按最大的窗口做预算，一旦降到小窗口的模型上就会**超窗被拒** ——
+        而超窗是厂商侧的错误，本地看不见原因。
+
+        候选都没声明时返回 ``None``。**不在这里编一个默认值**：
+        「缺省 = 多少」是使用方的决策，应当显式配置并出声（见 ``context.budget.fallback_model_window``）。
+        """
+        windows = [spec.context_window for spec in self.candidates(alias) if spec.context_window]
+        return min(windows) if windows else None
+
     @property
     def aliases(self) -> Mapping[str, AliasSpec]:
         return dict(self._aliases)
@@ -263,6 +276,19 @@ def _build_spec(
     weight = raw.get("weight")
     weight = None if weight is None else float(weight)
 
+    raw_window = raw.get("context_window")
+    context_window: int | None
+    if raw_window is None or raw_window == "":
+        context_window = None
+    else:
+        context_window = int(raw_window)
+        if context_window <= 0:
+            # 配置错误在**启动期**暴露：0 或负数的窗口会让预算算成负数，
+            # 而那会表现成「所有上下文都被砍光」，离原因很远。
+            raise ValueError(
+                f"model {key!r} 的 context_window 必须为正，得到 {context_window}"
+            )
+
     try:
         provider = build_provider(
             raw,
@@ -291,6 +317,7 @@ def _build_spec(
         capabilities=frozenset(capabilities),
         priority=priority,
         weight=weight,
+        context_window=context_window,
         config=dict(raw),
         unavailable_reason=reason,
     )

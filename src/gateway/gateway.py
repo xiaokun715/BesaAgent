@@ -39,6 +39,7 @@ from gateway.types import (
     StreamEvent,
     StreamFailed,
 )
+from gateway.tokens import CHARS_PER_TOKEN, estimate_messages_tokens
 from gateway.usage import UsageLedger, UsageRecord
 from provider.base import ModelBase
 from provider.errors import ProviderError
@@ -59,10 +60,10 @@ _log = logging.getLogger(__name__)
 
 #: 粗略 token 估算：4 字符 ≈ 1 token。
 #:
-#: 只用于 **TPM 预扣**，不用于计费（计费一律用上游返回的实际值）。
-#: 刻意不引入 tokenizer 依赖（``D-D``）：不同厂商用不同分词器，
-#: 而 TPM 预扣只需要量级正确 —— 误差由 :meth:`LocalRateLimiter.reconcile` 回补。
-_CHARS_PER_TOKEN = 4
+#: **口径收在 ``gateway/tokens.py``** —— ``src/context`` 也要估一次，
+#: 两边各写一份必然漂移，而漂移的表现是「预算算不准」（不报错）。
+#: 这个别名只是为了让本文件里的既有用法保持可读。
+_CHARS_PER_TOKEN = CHARS_PER_TOKEN
 
 
 class EventName:
@@ -814,13 +815,7 @@ class Gateway:
 
     @staticmethod
     def _estimate_chat_tokens(messages: Sequence[Message]) -> int:
-        total = 0
-        for message in messages:
-            content = message.content
-            total += len(content) if isinstance(content, str) else sum(
-                len(part.text) for part in content if hasattr(part, "text")
-            )
-        return max(1, total // _CHARS_PER_TOKEN)
+        return estimate_messages_tokens(messages)
 
     def _raise_terminal(
         self,
@@ -867,6 +862,15 @@ class Gateway:
     @property
     def limiter(self) -> LocalRateLimiter:
         return self._limiter
+
+    def context_window(self, alias: str) -> int | None:
+        """按逻辑名给出**可用于预算的上下文窗口**。
+
+        交给 ``src/context`` 用：它必须知道"这个 alias 能装多少"才能分预算，
+        而这件事**只有 gateway 知道** —— alias → 候选模型是这里的私有知识。
+        返回 ``None`` 表示候选都没声明窗口（使用方应当显式配兜底值并出声）。
+        """
+        return self._registry.context_window(alias)
 
 
 def _last_error(attempts: Sequence[AttemptRecord]) -> Exception | None:

@@ -18,7 +18,7 @@ import asyncio
 import sys
 from collections.abc import Sequence
 
-from apps.cli.commands import chat, doctor
+from apps.cli.commands import chat, doctor, run as run_cmd
 from apps.cli.runtime import open_runtime
 from foundation.errors import redact_secrets
 from foundation.settings import SettingsError
@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     chat.add_parser(subparsers)
+    run_cmd.add_parser(subparsers)
     doctor.add_parser(subparsers)
     return parser
 

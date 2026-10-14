@@ -12,5 +12,34 @@ from __future__ import annotations
 
 from apps.server.storage.postgres.database import open_database
 from apps.server.storage.postgres.engine import HealthReport, build_engine, healthcheck
+from apps.server.storage.postgres.vector import (
+    EMBEDDING_TABLES,
+    SUPPORTED_DIMS,
+    DimensionMismatch,
+    PgVectorStore,
+    UnknownSpace,
+    UnsupportedDimension,
+    Vector,
+    VectorSpaceRow,
+    build_vector_store,
+    open_vector_store,
+    spaces_from_config,
+)
 
-__all__ = ["HealthReport", "build_engine", "healthcheck", "open_database"]
+__all__ = [
+    "EMBEDDING_TABLES",
+    "SUPPORTED_DIMS",
+    "DimensionMismatch",
+    "HealthReport",
+    "PgVectorStore",
+    "UnknownSpace",
+    "UnsupportedDimension",
+    "Vector",
+    "VectorSpaceRow",
+    "build_engine",
+    "build_vector_store",
+    "healthcheck",
+    "open_database",
+    "open_vector_store",
+    "spaces_from_config",
+]

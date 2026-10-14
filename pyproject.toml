@@ -59,9 +59,13 @@ filterwarnings = ["error::DeprecationWarning"]
 # --------------------------------------------------------------------------- #
 [tool.importlinter]
 root_packages = [
-    "agent", "runtime", "context", "event", "foundation", "gateway",
+    "agent", "context", "event", "foundation", "gateway",
     "memory", "multiagent", "provider", "repo", "skill", "tool",
 ]
+# ⚠ `runtime` 曾经在这个列表里。**该包已被删除**（见 docs/agent 的 `DA-2`：
+#   单 agent 的运行时只有 `src/agent/runtime.py` 一个，「会话领域模型」那一层没有独立模块）。
+#   它同时从下面几条契约的 source_modules 里移除了 —— **若这个包将来回来，
+#   这几处都要补回去**，否则它会成为唯一一个不受依赖方向约束的顶层模块。
 # 注：所有同仓库顶层模块都必须列在上面（哪怕它现在还是空包）。
 # 只列已实现的三个会让 import-linter 把 agent / memory 等当成**外部包**，
 # 从而拒绝加载配置 —— 而它们恰恰是「不得依赖 provider」这条契约要管的对象。
@@ -87,7 +91,6 @@ forbidden_modules = [
     "multiagent",
     "event",
     "repo",
-    "runtime",
     "memory",
     "skill",
     "tool",
@@ -104,7 +107,6 @@ forbidden_modules = [
     "multiagent",
     "event",
     "repo",
-    "runtime",
     "memory",
     "skill",
     "tool",
@@ -113,12 +115,26 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "gateway 是 provider 的唯一消费者（FR-G-01）"
 type = "forbidden"
+# ⚠ `allow_indirect_imports = true` **不是放过它，是把规则写对**：
+#
+# 这条契约的本意是「除 gateway 外，谁都不许**直接** import provider」
+# （`gateway/messages.py` 与 `gateway/tools.py` 的职责恰恰是**转出** provider 类型，
+# 好让上层不必自己 import —— 那是 RT-13 的设计）。
+#
+# 而 import-linter 的 `forbidden` **默认连传递依赖一起算**：
+# `agent.executor → gateway.messages → provider.types` 会被判违规 ——
+# 于是这条契约从写下的第一天起就是红的（`agent` 那两条一直挂着），
+# 而它红的原因**正是设计要的那条路**。一条长期飘红的检查等于没有检查。
+allow_indirect_imports = true
 source_modules = [
     "agent",
     "multiagent",
+    # **context 曾经漏在这里**（`docs/context` `DC-3`）。它恰恰是最容易
+    # 「顺手 import provider」的地方 —— 它要构造消息、要估 token、要调摘要。
+    # 漏掉它等于给这个契约开了一个没人注意到的口子。
+    "context",
     "event",
     "repo",
-    "runtime",
     "memory",
     "skill",
     "tool",

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from repo.base import Database, Repository, Transaction
+from repo.embedding import VectorHit, VectorRecord, VectorStore
 from repo.types import BatchResult, Metric, Page, TimeRange, VectorSpace
 
 __all__ = [
@@ -28,5 +29,8 @@ __all__ = [
     "Repository",
     "TimeRange",
     "Transaction",
+    "VectorHit",
+    "VectorRecord",
     "VectorSpace",
+    "VectorStore",
 ]

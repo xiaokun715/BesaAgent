@@ -35,3 +35,11 @@ gateway:
     failure_threshold: 5
     cooldown_s: 30
     half_open_probes: 2
+
+# 单测环境把 embedding 钉回 mock（768 维）—— 与 emb.default 的候选一致。
+# 这条必须显式写：空间维度**不该随 base 的改动漂移**，
+# 漂移的那一刻，已有的向量全部失效。
+repo:
+  embedding:
+    dim: 768
+    model_key: emb-mock

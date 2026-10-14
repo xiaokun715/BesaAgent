@@ -22,8 +22,18 @@ from __future__ import annotations
 
 # 下面这些 import **是有副作用的**（把表注册到 Base.metadata），
 # 所以不能因为「看着没用到」就删掉。
+from repo.checkpoint import CheckpointRow
 from repo.event import EventRow
+from repo.memory import MemoryOpRow, MemoryRow
 from repo.tool import ToolExecutionRow
 from repo.usage import UsageDropRow, UsageRow
 
-__all__ = ["EventRow", "ToolExecutionRow", "UsageDropRow", "UsageRow"]
+__all__ = [
+    "CheckpointRow",
+    "EventRow",
+    "MemoryOpRow",
+    "MemoryRow",
+    "ToolExecutionRow",
+    "UsageDropRow",
+    "UsageRow",
+]

@@ -24,7 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from composition.agent import build_agent
+from composition.context import build_context
 from composition.event_sink import BufferingEmitter, flush_events
+from composition.memory import build_memory
 from composition.tools import build_tools, to_tool_specs
 from composition.usage_sink import to_usage_rows, try_flush_usage
 from foundation.clock import Clock, SystemClock
@@ -39,6 +42,9 @@ from gateway.registry import Registry
 from gateway.retry import RetryPolicy
 from gateway.tools import ToolSpec
 from gateway.usage import UsageLedger
+from memory.manager import MemoryService
+from context.manager import ContextManager
+from agent.runtime import AgentRuntime
 from repo.usage import UsageRepo, UsageRow
 from tool.catalog import Catalog, CatalogIssue
 from tool.executor import ToolExecutor
@@ -70,6 +76,15 @@ class Runtime:
     #: 熔断计数都是有状态的，每次重建等于每次都从头开始。
     tools: ToolExecutor | None = None
     catalog: Catalog | None = None
+    #: 记忆层的唯一入口。``None`` = 未启用或没有数据库（``memory.enabled=false`` 是默认）。
+    #: **记忆是旁路**：它为 ``None`` 时上层照常运行，只是不记也不回忆（`NFR-M-07`）。
+    memory: MemoryService | None = None
+    #: 上下文层的唯一入口。``None`` = 未启用（``context.enabled``）。
+    #: **记忆为 ``None`` 时它照样工作** —— 只是少了长期记忆那一层。
+    context: ContextManager | None = None
+    #: 单 agent 运行时的唯一入口。``None`` = 未启用（``agent.enabled=false``）。
+    #: 上下文为 ``None`` 时它照样工作 —— 只是没有运行内压缩。
+    agent: AgentRuntime | None = None
 
     async def inspect_tools(self) -> tuple[CatalogIssue, ...]:
         """启动期的工具体检（重复 / 冲突）。
@@ -175,6 +190,7 @@ def build_runtime(
     provider_options: Mapping[str, Any] | None = None,
     database: Database | None = None,
     idempotency_store: Any | None = None,
+    vector_store: Any | None = None,
 ) -> Runtime:
     """按配置装配出可用的运行时。
 
@@ -189,6 +205,8 @@ def build_runtime(
             （幂等没有权威记录 = 真的没有幂等保护）。
         idempotency_store: 幂等的快路径（Redis）。同样由 app 层注入。
             ``None`` 时退到「只用权威记录」的慢路径 —— **语义完全正确，只是慢**。
+        vector_store: 向量检索的实现（pgvector）。由 app 层注入。
+            ``None`` 时记忆退到「结构化 + 关键词」检索 —— 仍可用，只是少了语义这一路。
 
     Raises:
         SettingsError: 配置文件缺失 / 语法错误 / 插值变量未定义。
@@ -240,13 +258,52 @@ def build_runtime(
         events=emitter,
     )
 
+    # 记忆层排在工具层之后：它要用 gateway（提取/判断/反思的 LLM + 向量化），
+    # 而 gateway 已经建好了。它与工具层**共用同一个 emitter** ——
+    # 于是记忆事件与用量、工具事件落进同一个事务（每个模块只有一个事件出口）。
+    memory_bundle = build_memory(
+        memory_cfg=cfg.section("memory"),
+        gateway=gateway,
+        database=database,
+        vector_store=vector_store,
+        events=emitter,
+        clock=resolved_clock,
+        space=str(cfg.get("repo.embedding.space", "default")),
+    )
+
+    # 上下文层排在记忆之后：它要用 memory 做长期记忆召回，
+    # 而 memory 已经建好了（没建也照样工作，只是少那一层）。
+    context_bundle = build_context(
+        context_cfg=cfg.section("context"),
+        gateway=gateway,
+        memory=memory_bundle.service if memory_bundle is not None else None,
+        events=emitter,
+        clock=resolved_clock,
+    )
+
+    # agent 排在最后：它要用上下文（运行内压缩）与工具执行器，
+    # 而两者都已经建好了。
+    agent_bundle = build_agent(
+        agent_cfg=cfg.section("agent"),
+        gateway=gateway,
+        tools=bundle.executor,
+        catalog=bundle.catalog,
+        context=context_bundle.manager if context_bundle is not None else None,
+        database=database,
+        events=emitter,
+        clock=resolved_clock,
+    )
+
     _log.info(
-        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，工具 %d 个，落库=%s",
+        "运行时装配完成：env=%s，模型 %d 个，逻辑名 %s，工具 %d 个，落库=%s，记忆=%s，上下文=%s，agent=%s",
         cfg.env,
         len(registry.models),
         ", ".join(sorted(registry.aliases)) or "（无）",
         len(bundle.executor.registry),
         "开（用量 + 事件）" if database is not None else "关（只留在内存）",
+        "开" if memory_bundle is not None else "关",
+        "开" if context_bundle is not None else "关",
+        "开" if agent_bundle is not None else "关",
     )
     return Runtime(
         settings=cfg,
@@ -256,6 +313,9 @@ def build_runtime(
         event_sink=event_sink,
         tools=bundle.executor,
         catalog=bundle.catalog,
+        memory=memory_bundle.service if memory_bundle is not None else None,
+        context=context_bundle.manager if context_bundle is not None else None,
+        agent=agent_bundle.runtime if agent_bundle is not None else None,
     )
 
 

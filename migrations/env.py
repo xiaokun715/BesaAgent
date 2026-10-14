@@ -38,6 +38,17 @@ from foundation.settings import load_config
 # 所以「有哪些表」这件事只允许有一个事实来源 —— 就是 `repo.models`。
 import repo.models  # noqa: F401
 
+# ⚠ **迁移侧唯一一处跨 apps/src 的引用**（本文件 docstring 里说的那个例外）。
+#
+# 向量表（`vector_spaces` / `embeddings_<dim>`）按 `NFR-S-01` 归
+# `apps/server/storage/postgres/vector.py` —— 因为 `vector(N)` 是列类型、
+# HNSW 是索引类型，都绑死了 Postgres。但它们注册到**同一个** `foundation/db.Base`，
+# 所以这一处必须 import，否则 Alembic 看不见它们，会生成 DROP TABLE 的迁移。
+#
+# 依赖这一行能成立的前提：`alembic.ini` 的 `prepend_sys_path` 里有 `.`
+# （`apps/` 在仓库根，不在 `src/` 下）。
+import apps.server.storage.postgres.vector  # noqa: F401
+
 config = context.config
 
 if config.config_file_name is not None:
